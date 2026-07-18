@@ -1,32 +1,45 @@
 <?php
-
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
-use Database\Factories\UserFactory;
-use Illuminate\Database\Eloquent\Attributes\Fillable;
-use Illuminate\Database\Eloquent\Attributes\Hidden;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Laravel\Sanctum\HasApiTokens;
 
-#[Fillable(['name', 'email', 'password'])]
-#[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable
 {
-    /** @use HasFactory<UserFactory> */
-    use HasFactory, Notifiable;
+    use HasApiTokens, Notifiable;
 
-    /**
-     * Get the attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
+    protected $fillable = [
+        'name', 'email', 'password', 'role', 'wilayah_kode', 'poin', 'kuota_subscribe', 'phone',
+    ];
+
+    protected $hidden = ['password', 'remember_token'];
+
     protected function casts(): array
     {
-        return [
-            'email_verified_at' => 'datetime',
-            'password' => 'hashed',
-        ];
+        return ['email_verified_at' => 'datetime', 'password' => 'hashed'];
     }
+
+    public function wilayahTugas()
+    {
+        return $this->belongsTo(Wilayah::class, 'wilayah_kode', 'kode');
+    }
+
+    public function abjLaporan()
+    {
+        return $this->hasMany(AbjLaporan::class, 'kader_id');
+    }
+
+    public function laporanWarga()
+    {
+        return $this->hasMany(LaporanWarga::class);
+    }
+
+    public function subscribeWilayah()
+    {
+        return $this->hasMany(SubscribeWilayah::class);
+    }
+
+    public function isKader(): bool { return $this->role === 'kader'; }
+    public function isAdmin(): bool { return in_array($this->role, ['admin_puskesmas', 'admin_dinkes']); }
 }
