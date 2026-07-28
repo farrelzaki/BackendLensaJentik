@@ -52,21 +52,28 @@ class SkorRisikoController extends Controller
         $request->validate([
             'tingkat' => 'required|in:kabupaten,kecamatan,desa',
             'parent_kode' => 'required|string',
+            'level_risiko' => 'nullable|in:rendah,sedang,tinggi',
+            'tanggal' => 'nullable|date',
         ]);
 
         $jenis = $request->query('jenis', 'dbd');
+        $tanggal = $request->query('tanggal', now()->timezone('Asia/Jakarta')->toDateString());
+        $isPrediksi = $tanggal !== now()->timezone('Asia/Jakarta')->toDateString();
 
         $wilayahList = Wilayah::where('tingkat', $request->tingkat)
             ->where('parent_kode', $request->parent_kode)
             ->pluck('kode');
 
-        $skor = SkorRisiko::whereIn('wilayah_kode', $wilayahList)
+        $query = SkorRisiko::whereIn('wilayah_kode', $wilayahList)
             ->where('jenis_penyakit', $jenis)
-            ->where('is_prediksi', false)
-            ->whereDate('tanggal', now()->timezone('Asia/Jakarta')->toDateString())
-            ->with('wilayah:kode,nama,latitude,longitude')
-            ->get();
+            ->where('is_prediksi', $isPrediksi)
+            ->whereDate('tanggal', $tanggal)
+            ->with('wilayah:kode,nama,latitude,longitude');
 
-        return response()->json(['data' => $skor]);
+        if ($request->filled('level_risiko')) {
+            $query->where('level_risiko', $request->level_risiko);
+        }
+
+        return response()->json(['data' => $query->get()]);
     }
 }

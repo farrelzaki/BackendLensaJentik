@@ -13,6 +13,20 @@ use App\Http\Controllers\Api\Admin\DashboardController;
 use App\Http\Controllers\Api\SubscribeWilayahController;
 use App\Http\Controllers\Api\NotifikasiController;
 use App\Http\Controllers\Api\ExportController;
+use App\Http\Controllers\Api\StatistikController;
+use App\Http\Controllers\Api\EdukasiController;
+
+Route::prefix('statistik')->group(function () {
+    Route::get('/ringkasan', [StatistikController::class, 'ringkasan']);
+    Route::get('/bandingkan', [StatistikController::class, 'bandingkan']);
+});
+
+Route::prefix('edukasi')->group(function () {
+    Route::get('/kuis/pertanyaan', [EdukasiController::class, 'pertanyaanKuis']);
+    Route::post('/kuis/hitung', [EdukasiController::class, 'hitungKuis']);
+    Route::get('/', [EdukasiController::class, 'index']);
+    Route::get('/{slug}', [EdukasiController::class, 'show']);
+});
 
 Route::middleware(['auth:sanctum', 'role:kader,admin_puskesmas,admin_dinkes'])->prefix('export')->group(function () {
     Route::get('/abj/excel', [ExportController::class, 'excel']);
