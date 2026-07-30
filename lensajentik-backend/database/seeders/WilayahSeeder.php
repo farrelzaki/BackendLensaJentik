@@ -2,6 +2,7 @@
 namespace Database\Seeders;
 
 use App\Models\Wilayah;
+use App\Services\WeatherService;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Http;
 
@@ -11,6 +12,7 @@ class WilayahSeeder extends Seeder
 
     public function run(): void
     {
+        $weatherService = app(WeatherService::class);
         $provinces = $this->fetch("{$this->baseUrl}/provinces.json");
 
         foreach ($provinces as $prov) {
@@ -33,11 +35,20 @@ class WilayahSeeder extends Seeder
                 $districts = $this->fetch("{$this->baseUrl}/districts/{$reg['id']}.json");
 
                 foreach ($districts as $dist) {
-                    Wilayah::updateOrCreate(['kode' => $dist['id']], [
+                    $wilayah = Wilayah::updateOrCreate(['kode' => $dist['id']], [
                         'nama' => $dist['name'],
                         'tingkat' => 'kecamatan',
                         'parent_kode' => $reg['id'],
                     ]);
+
+                    // Fetch elevasi untuk kecamatan — hanya jika belum ada
+                    if ($wilayah->elevasi === null && $wilayah->latitude && $wilayah->longitude) {
+                        try {
+                            $weatherService->fetchDanSimpanElevasi($wilayah);
+                        } catch (\Exception $e) {
+                            // Elevasi opsional — jangan hentikan seeding
+                        }
+                    }
                 }
                 $this->command->info("  Kabupaten: {$reg['name']} (+" . count($districts) . " kecamatan)");
             }

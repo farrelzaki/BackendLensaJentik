@@ -10,7 +10,7 @@ class Wilayah extends Model
     public $incrementing = false;
     protected $keyType = 'string';
 
-    protected $fillable = ['kode', 'nama', 'tingkat', 'parent_kode', 'latitude', 'longitude'];
+    protected $fillable = ['kode', 'nama', 'tingkat', 'parent_kode', 'latitude', 'longitude', 'elevasi'];
 
     public function parent()
     {
