@@ -21,32 +21,87 @@ class WeatherService
             return true;
         }
 
-        // Susun nama pencarian: nama wilayah + ", Indonesia" biar hasil lebih akurat
+        // Susun nama pencarian dengan konteks parent untuk akurasi
         $namaParent = optional($wilayah->parent)->nama;
-        $query = $namaParent ? "{$wilayah->nama}, {$namaParent}, Indonesia" : "{$wilayah->nama}, Indonesia";
+        $namaGrandParent = optional($wilayah->parent?->parent)->nama;
+        if ($namaGrandParent) {
+            $searchQuery = "{$wilayah->nama}, {$namaParent}, {$namaGrandParent}, Indonesia";
+        } elseif ($namaParent) {
+            $searchQuery = "{$wilayah->nama}, {$namaParent}, Indonesia";
+        } else {
+            $searchQuery = "{$wilayah->nama}, Indonesia";
+        }
 
+        // ── Coba 1: Open-Meteo Geocoding API ──────────────────────────
+        $coords = $this->geocodeOpenMeteo($searchQuery);
+
+        // ── Coba 2: Nominatim (fallback) ──────────────────────────────
+        if (!$coords) {
+            $coords = $this->geocodeNominatim($searchQuery);
+        }
+
+        if (!$coords) {
+            return false;
+        }
+
+        $wilayah->update([
+            'latitude'  => $coords['lat'],
+            'longitude' => $coords['lng'],
+        ]);
+
+        return true;
+    }
+
+    /**
+     * Geocode via Open-Meteo Geocoding API.
+     * @return array{lat: float, lng: float}|null
+     */
+    protected function geocodeOpenMeteo(string $query): ?array
+    {
         $response = Http::retry(2, 1000)->timeout(15)->get($this->geocodingUrl, [
-            'name' => $wilayah->nama,
-            'count' => 5,
-            'language' => 'id',
-            'country' => 'ID',
+            'name'    => $query,
+            'count'   => 5,
+            'language'=> 'id',
         ]);
 
         $results = $response->json('results');
 
         if (empty($results)) {
-            return false;
+            return null;
         }
 
-        // Ambil hasil pertama yang match
-        $best = $results[0];
+        return [
+            'lat' => (float) $results[0]['latitude'],
+            'lng' => (float) $results[0]['longitude'],
+        ];
+    }
 
-        $wilayah->update([
-            'latitude' => $best['latitude'],
-            'longitude' => $best['longitude'],
-        ]);
+    /**
+     * Geocode via Nominatim (OpenStreetMap) — fallback.
+     * Rate limit: max 1 req/sec. Lebih akurat untuk wilayah Indonesia.
+     * @return array{lat: float, lng: float}|null
+     */
+    protected function geocodeNominatim(string $query): ?array
+    {
+        $response = Http::retry(1, 2000)->timeout(15)
+            ->withHeaders(['User-Agent' => 'LensaJentik/1.0'])
+            ->get('https://nominatim.openstreetmap.org/search', [
+                'q'               => $query,
+                'format'          => 'json',
+                'limit'           => 3,
+                'accept-language' => 'id',
+            ]);
 
-        return true;
+        $results = $response->json();
+
+        if (empty($results) || !is_array($results)) {
+            return null;
+        }
+
+        return [
+            'lat' => (float) $results[0]['lat'],
+            'lng' => (float) $results[0]['lon'],
+        ];
     }
 
     /**
