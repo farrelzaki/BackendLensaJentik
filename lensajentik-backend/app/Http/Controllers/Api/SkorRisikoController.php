@@ -15,6 +15,45 @@ class SkorRisikoController extends Controller
     ) {}
 
     /**
+     * POST /api/skor-risiko/refresh-kabupaten?parent_kode=3201
+     * Refresh skor risiko untuk SELURUH kecamatan dalam satu kabupaten.
+     */
+    public function refreshKabupaten(Request $request)
+    {
+        $request->validate([
+            'parent_kode' => 'required|exists:wilayah,kode',
+        ]);
+
+        $jenis = $request->query('jenis', 'dbd');
+        $kecamatan = Wilayah::where('parent_kode', $request->parent_kode)
+            ->where('tingkat', 'kecamatan')
+            ->get();
+
+        if ($kecamatan->isEmpty()) {
+            return response()->json(['message' => 'Tidak ada kecamatan ditemukan'], 404);
+        }
+
+        $diproses = 0;
+        $gagal = 0;
+
+        foreach ($kecamatan as $kec) {
+            try {
+                $this->riskScoreService->hitungDanSimpan($kec, $jenis);
+                $diproses++;
+            } catch (\Exception $e) {
+                $gagal++;
+                logger()->warning("Refresh kabupaten gagal: {$kec->nama} — {$e->getMessage()}");
+            }
+        }
+
+        return response()->json([
+            'message' => "Selesai: {$diproses} berhasil, {$gagal} gagal dari {$kecamatan->count()} kecamatan",
+            'diproses' => $diproses,
+            'gagal' => $gagal,
+        ]);
+    }
+
+    /**
      * GET /api/skor-risiko/{kode}?jenis=dbd
      * Hitung ulang & kembalikan skor risiko (hari ini + prediksi 14 hari) untuk 1 wilayah.
      */
@@ -77,11 +116,61 @@ class SkorRisikoController extends Controller
 
             $wilayahList = $wilayahQuery->pluck('kode');
 
-            $query = SkorRisiko::whereIn('wilayah_kode', $wilayahList)
-                ->where('jenis_penyakit', $jenis)
-                ->where('is_prediksi', $isPrediksi)
-                ->whereDate('tanggal', $tanggal)
-                ->with('wilayah:kode,nama,latitude,longitude');
+            // Jika ada parent_kode: tampilkan SEMUA kecamatan + skor terbarunya
+            if ($request->filled('parent_kode')) {
+                $kodeList = $wilayahList->toArray();
+
+                if (empty($kodeList)) {
+                    return response()->json(['data' => [], 'message' => 'Tidak ada kecamatan untuk parent_kode ini.']);
+                }
+
+                $placeholders = implode(',', array_fill(0, count($kodeList), '?'));
+
+                // Raw SQL: LEFT JOIN LATERAL dengan DISTINCT ON (PostgreSQL)
+                $rows = \DB::select("
+                    SELECT
+                        w.kode, w.nama, w.latitude, w.longitude,
+                        sr.skor, sr.level_risiko, sr.confidence_level,
+                        sr.faktor_perhitungan, sr.tanggal
+                    FROM wilayah w
+                    LEFT JOIN LATERAL (
+                        SELECT DISTINCT ON (wilayah_kode)
+                            wilayah_kode, skor, level_risiko, confidence_level, faktor_perhitungan, tanggal
+                        FROM skor_risiko
+                        WHERE wilayah_kode = w.kode
+                          AND jenis_penyakit = ?
+                          AND is_prediksi = false
+                        ORDER BY wilayah_kode, tanggal DESC
+                        LIMIT 1
+                    ) sr ON true
+                    WHERE w.kode IN ({$placeholders})
+                    ORDER BY w.nama
+                ", array_merge([$jenis], $kodeList));
+
+                $data = collect($rows)->map(fn($w) => [
+                    'wilayah_kode'       => $w->kode,
+                    'wilayah'            => ['kode' => $w->kode, 'nama' => $w->nama, 'latitude' => $w->latitude, 'longitude' => $w->longitude, 'tingkat' => 'kecamatan'],
+                    'jenis_penyakit'     => $jenis,
+                    'skor'               => $w->skor !== null ? (float) $w->skor : null,
+                    'level_risiko'       => $w->level_risiko ?? 'belum_ada_data',
+                    'confidence_level'   => $w->confidence_level ?? 'belum_ada_data',
+                    'faktor_perhitungan' => is_string($w->faktor_perhitungan) ? json_decode($w->faktor_perhitungan, true) : $w->faktor_perhitungan,
+                    'tanggal'            => $w->tanggal ?? now()->toDateString(),
+                    'is_prediksi'        => false,
+                ]);
+
+                if ($request->filled('level_risiko')) {
+                    $data = $data->where('level_risiko', $request->level_risiko);
+                }
+
+                return response()->json(['data' => $data->values()]);
+            } else {
+                $query = SkorRisiko::whereIn('wilayah_kode', $wilayahList)
+                    ->where('jenis_penyakit', $jenis)
+                    ->where('is_prediksi', $isPrediksi)
+                    ->whereDate('tanggal', $tanggal)
+                    ->with('wilayah:kode,nama,latitude,longitude');
+            }
 
             if ($request->filled('level_risiko')) {
                 $query->where('level_risiko', $request->level_risiko);

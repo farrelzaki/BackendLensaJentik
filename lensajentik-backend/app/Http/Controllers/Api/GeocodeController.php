@@ -9,6 +9,54 @@ use Illuminate\Support\Facades\Http;
 class GeocodeController extends Controller
 {
     /**
+     * GET /api/geocode/boundary?q=Kota+Bogor
+     * Proxy ke Nominatim untuk ambil GeoJSON boundary wilayah.
+     */
+    public function boundary(Request $request)
+    {
+        $request->validate(['q' => 'required|string|min:3']);
+        return response()->json(['geojson' => $this->fetchNominatimGeojson($request->q)]);
+    }
+
+    /**
+     * POST /api/geocode/boundary-batch
+     * Body: { "queries": ["Babakan Madang, Bogor, Indonesia", ...] }
+     * Return: { "results": { "Babakan Madang": {...geojson}, ... } }
+     */
+    public function boundaryBatch(Request $request)
+    {
+        $request->validate(['queries' => 'required|array|min:1|max:50']);
+        $results = [];
+        foreach ($request->queries as $q) {
+            $nama = explode(',', $q)[0];
+            $results[$nama] = $this->fetchNominatimGeojson($q);
+            // Tanpa jeda — Nominatim toleransi untuk batch kecil
+        }
+        return response()->json(['results' => $results]);
+    }
+
+    protected function fetchNominatimGeojson(string $query): ?array
+    {
+        try {
+            $response = Http::withHeaders(['User-Agent' => 'LensaJentik/1.0'])
+                ->timeout(15)
+                ->get('https://nominatim.openstreetmap.org/search', [
+                    'q' => $query,
+                    'format' => 'json',
+                    'limit' => 3,
+                    'polygon_geojson' => 1,
+                ]);
+            $data = $response->json();
+            if (empty($data)) return null;
+            $best = collect($data)->first(fn($g) => isset($g['geojson']) && str_contains($g['geojson']['type'] ?? '', 'Polygon'))
+                ?? collect($data)->first(fn($g) => isset($g['geojson']));
+            return $best['geojson'] ?? null;
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
+
+    /**
      * GET /api/geocode/reverse?lat=-8.17&lng=113.7
      * Melakukan reverse geocoding menggunakan Nominatim (OpenStreetMap)
      */

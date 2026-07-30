@@ -81,7 +81,7 @@ Route::prefix('laporan-warga')->group(function () {
 });
 
 Route::get('/skor-risiko/peta', [SkorRisikoController::class, 'peta']);
-
+Route::post('/skor-risiko/refresh-kabupaten', [SkorRisikoController::class, 'refreshKabupaten']);
 Route::get('/skor-risiko/{kode}', [SkorRisikoController::class, 'show']);
 
 Route::get('/cuaca/{kode}', [CuacaController::class, 'show']);
@@ -105,6 +105,7 @@ Route::prefix('auth')->group(function () {
 Route::prefix('wilayah')->group(function () {
     Route::get('/', [WilayahController::class, 'index']);
     Route::get('/search', [WilayahController::class, 'search']);
+    Route::get('/terdekat', [WilayahController::class, 'terdekat']); // harus sebelum /{kode}
     Route::get('/{kode}', [WilayahController::class, 'show']);
     Route::get('/{kode}/desa', [WilayahController::class, 'desa']);
 });
@@ -113,6 +114,8 @@ Route::get('/user', function (Request $request) {
     return $request->user();
 })->middleware('auth:sanctum');
 
+Route::get('/geocode/boundary', [GeocodeController::class, 'boundary']);
+Route::post('/geocode/boundary-batch', [GeocodeController::class, 'boundaryBatch']);
 Route::get('/geocode/reverse', [GeocodeController::class, 'reverse']);
 
 Route::middleware(['auth:sanctum', 'role:kader'])->prefix('kader')->group(function () {

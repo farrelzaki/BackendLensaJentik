@@ -65,6 +65,57 @@ class WilayahController extends Controller
     }
 
     /**
+     * Cari kecamatan terdekat dari koordinat GPS.
+     * GET /api/wilayah/terdekat?lat=-6.55&lng=106.72
+     */
+    public function terdekat(Request $request)
+    {
+        $request->validate([
+            'lat' => 'required|numeric',
+            'lng' => 'required|numeric',
+        ]);
+
+        $lat = (float) $request->lat;
+        $lng = (float) $request->lng;
+
+        $kecamatan = Wilayah::where('tingkat', 'kecamatan')
+            ->whereNotNull('latitude')
+            ->whereNotNull('longitude')
+            ->select('kode', 'nama', 'latitude', 'longitude', 'parent_kode')
+            ->get();
+
+        if ($kecamatan->isEmpty()) {
+            return response()->json(['message' => 'Belum ada data kecamatan dengan koordinat'], 404);
+        }
+
+        $terdekat = null;
+        $jarakMin = PHP_FLOAT_MAX;
+
+        foreach ($kecamatan as $kec) {
+            $jarak = sqrt(
+                pow($lat - (float) $kec->latitude, 2) +
+                pow($lng - (float) $kec->longitude, 2)
+            );
+            if ($jarak < $jarakMin) {
+                $jarakMin = $jarak;
+                $terdekat = $kec;
+            }
+        }
+
+        // Ambil info kabupaten + provinsi
+        $terdekat->load('parent.parent');
+
+        return response()->json([
+            'data' => [
+                'kecamatan' => $terdekat->only(['kode', 'nama']),
+                'kabupaten' => $terdekat->parent ? $terdekat->parent->only(['kode', 'nama']) : null,
+                'provinsi'  => $terdekat->parent?->parent ? $terdekat->parent->parent->only(['kode', 'nama']) : null,
+                'jarak'     => round($jarakMin * 111, 2), // perkiraan km (1° ≈ 111 km)
+            ],
+        ]);
+    }
+
+    /**
      * Ambil daftar desa/kelurahan di sebuah kecamatan.
      * Data desa TIDAK diseed di awal (terlalu besar), jadi di-fetch on-demand
      * dari API emsifa lalu di-cache ke tabel wilayah saat pertama diakses.
