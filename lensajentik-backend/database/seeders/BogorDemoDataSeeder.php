@@ -217,7 +217,7 @@ class BogorDemoDataSeeder extends Seeder
         $admin = User::updateOrCreate(
             ['email' => 'admin.bogor@lensajentik.id'],
             [
-                'name'         => 'Admin Dinkes Bogor',
+                'nama'         => 'Admin Dinkes Bogor',
                 'password'     => $pw,
                 'role'         => 'admin_dinkes',
                 'is_active'    => true,
@@ -230,15 +230,15 @@ class BogorDemoDataSeeder extends Seeder
 
         // --- 3 Kader ---
         $kaderData = [
-            ['email' => 'kader.bogor1@lensajentik.id', 'name' => 'Kader Jentik – ' . ($this->wilayahCache[$kec[0]]['nama'] ?? 'Bogor')],
-            ['email' => 'kader.bogor2@lensajentik.id', 'name' => 'Kader Jentik – ' . ($this->wilayahCache[$kec[1]]['nama'] ?? 'Bogor')],
-            ['email' => 'kader.bogor3@lensajentik.id', 'name' => 'Kader Jentik – ' . ($this->wilayahCache[$kec[2]]['nama'] ?? 'Bogor')],
+            ['email' => 'kader.bogor1@lensajentik.id', 'nama' => 'Kader Jentik – ' . ($this->wilayahCache[$kec[0]]['nama'] ?? 'Bogor')],
+            ['email' => 'kader.bogor2@lensajentik.id', 'nama' => 'Kader Jentik – ' . ($this->wilayahCache[$kec[1]]['nama'] ?? 'Bogor')],
+            ['email' => 'kader.bogor3@lensajentik.id', 'nama' => 'Kader Jentik – ' . ($this->wilayahCache[$kec[2]]['nama'] ?? 'Bogor')],
         ];
         for ($i = 0; $i < 3; $i++) {
             $kader = User::updateOrCreate(
                 ['email' => $kaderData[$i]['email']],
                 [
-                    'name'             => $kaderData[$i]['name'],
+                    'nama'             => $kaderData[$i]['nama'],
                     'password'         => $pw,
                     'role'             => 'kader',
                     'is_active'        => true,
@@ -253,15 +253,15 @@ class BogorDemoDataSeeder extends Seeder
 
         // --- 3 Warga ---
         $wargaData = [
-            ['email' => 'warga.bogor1@lensajentik.id', 'name' => 'Budi Santoso (Warga)'],
-            ['email' => 'warga.bogor2@lensajentik.id', 'name' => 'Siti Rahayu (Warga)'],
-            ['email' => 'warga.bogor3@lensajentik.id', 'name' => 'Asep Hidayat (Warga)'],
+            ['email' => 'warga.bogor1@lensajentik.id', 'nama' => 'Budi Santoso (Warga)'],
+            ['email' => 'warga.bogor2@lensajentik.id', 'nama' => 'Siti Rahayu (Warga)'],
+            ['email' => 'warga.bogor3@lensajentik.id', 'nama' => 'Asep Hidayat (Warga)'],
         ];
         foreach ($wargaData as $i => $wd) {
             $warga = User::updateOrCreate(
                 ['email' => $wd['email']],
                 [
-                    'name'             => $wd['name'],
+                    'nama'             => $wd['nama'],
                     'password'         => $pw,
                     'role'             => 'warga',
                     'is_active'        => true,
@@ -416,7 +416,7 @@ class BogorDemoDataSeeder extends Seeder
     {
         $this->command->info('🦟 [4/8] Seeding ABJ Laporan...');
 
-        AbjLaporan::whereIn('kader_id', $this->kaderIds)->delete();
+        AbjLaporan::whereIn('user_id', $this->kaderIds)->delete();
 
         $totalInserted = 0;
 
@@ -444,11 +444,11 @@ class BogorDemoDataSeeder extends Seeder
                 ];
 
                 AbjLaporan::create([
-                    'kader_id'                   => $kaderId,
+                    'user_id'                    => $kaderId,
                     'wilayah_kode'               => $kader->wilayah_kode,
                     'tanggal_pemeriksaan'        => $tanggal->toDateString(),
                     'jumlah_rumah_diperiksa'     => $diperiksa,
-                    'jumlah_rumah_positif_jentik'=> $positif,
+                    'jumlah_rumah_positif'       => $positif,
                     'abj_persen'                 => $abjPersen,
                     'catatan'                    => $catatanOptions[array_rand($catatanOptions)],
                 ]);
@@ -470,7 +470,7 @@ class BogorDemoDataSeeder extends Seeder
         // Hapus dulu biar bersih
         LaporanWarga::whereIn('wilayah_kode', $this->kecamatanBogor)->delete();
 
-        $statusOptions  = ['belum_ditangani', 'belum_ditangani', 'sedang_diproses', 'sedang_diproses', 'selesai'];
+        $statusOptions  = ['belum_ditangani', 'belum_ditangani', 'diproses', 'diproses', 'selesai'];
         $fotoDummies = [
             'https://res.cloudinary.com/demo/image/upload/v1612456485/sample.jpg',
             'https://res.cloudinary.com/demo/image/upload/f_auto,q_auto/woman-holding-bucket',
@@ -784,7 +784,7 @@ class BogorDemoDataSeeder extends Seeder
                     'tipe'         => $tipe,
                     'judul'        => $judul,
                     'pesan'        => $pesan,
-                    'is_read'      => (bool) rand(0, 1),
+                    'is_dibaca'    => (bool) rand(0, 1),
                     'created_at'   => Carbon::now()->subDays($hariLalu),
                     'updated_at'   => Carbon::now()->subDays($hariLalu),
                 ]);

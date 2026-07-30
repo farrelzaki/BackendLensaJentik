@@ -17,16 +17,16 @@ class AbjLaporanController extends Controller
             'wilayah_kode' => 'required|exists:wilayah,kode',
             'tanggal_pemeriksaan' => 'required|date|before_or_equal:today',
             'jumlah_rumah_diperiksa' => 'required|integer|min:1',
-            'jumlah_rumah_positif_jentik' => 'required|integer|min:0|lte:jumlah_rumah_diperiksa',
+            'jumlah_rumah_positif' => 'required|integer|min:0|lte:jumlah_rumah_diperiksa',
             'catatan' => 'nullable|string|max:1000',
         ]);
 
-        $abjPersen = (($validated['jumlah_rumah_diperiksa'] - $validated['jumlah_rumah_positif_jentik'])
+        $abjPersen = (($validated['jumlah_rumah_diperiksa'] - $validated['jumlah_rumah_positif'])
             / $validated['jumlah_rumah_diperiksa']) * 100;
 
         $abj = AbjLaporan::create([
             ...$validated,
-            'kader_id' => $request->user()->id,
+            'user_id' => $request->user()->id,
             'abj_persen' => round($abjPersen, 2),
         ]);
 
@@ -42,7 +42,7 @@ class AbjLaporanController extends Controller
         $request->validate(['wilayah_kode' => 'required|exists:wilayah,kode']);
 
         $data = AbjLaporan::where('wilayah_kode', $request->wilayah_kode)
-            ->with('kader:id,name')
+            ->with('user:id,nama')
             ->orderByDesc('tanggal_pemeriksaan')
             ->paginate(20);
 
@@ -55,8 +55,8 @@ class AbjLaporanController extends Controller
      */
     public function riwayatSaya(Request $request)
     {
-        $data = AbjLaporan::where('kader_id', $request->user()->id)
-            ->with('wilayah:kode,nama')
+        $data = AbjLaporan::where('user_id', $request->user()->id)
+            ->with(['wilayah:kode,nama', 'user:id,nama'])
             ->orderByDesc('tanggal_pemeriksaan')
             ->paginate(20);
 

@@ -5,7 +5,7 @@
     <div style="max-width: 500px; margin: 0 auto; background: white; padding: 24px; border-radius: 8px;">
         <h2 style="color: #1565C0;">🔑 Reset Password LensaJentik</h2>
         <p style="color: #333; line-height: 1.6;">
-            Halo, <strong>{{ $name }}</strong>!
+            Halo, <strong>{{ $nama }}</strong>!
         </p>
         <p style="color: #333; line-height: 1.6;">
             Kami menerima permintaan untuk mereset password akun LensaJentik kamu.

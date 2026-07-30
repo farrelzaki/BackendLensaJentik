@@ -18,7 +18,7 @@ class NotifikasiController extends Controller
             ->paginate(20);
 
         $belumDibaca = Notifikasi::where('user_id', $request->user()->id)
-            ->where('is_read', false)
+            ->where('is_dibaca', false)
             ->count();
 
         return response()->json(['data' => $data, 'belum_dibaca' => $belumDibaca]);
@@ -35,7 +35,7 @@ class NotifikasiController extends Controller
             return response()->json(['message' => 'Notifikasi tidak ditemukan'], 404);
         }
 
-        $notif->update(['is_read' => true]);
+        $notif->update(['is_dibaca' => true]);
 
         return response()->json(['message' => 'Notifikasi ditandai dibaca']);
     }
@@ -46,8 +46,8 @@ class NotifikasiController extends Controller
     public function tandaiSemuaDibaca(Request $request)
     {
         Notifikasi::where('user_id', $request->user()->id)
-            ->where('is_read', false)
-            ->update(['is_read' => true]);
+            ->where('is_dibaca', false)
+            ->update(['is_dibaca' => true]);
 
         return response()->json(['message' => 'Semua notifikasi ditandai dibaca']);
     }

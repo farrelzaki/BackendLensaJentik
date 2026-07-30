@@ -20,13 +20,26 @@ use Carbon\Carbon;
  * Confidence "kuat" (ada ABJ):  40% Cuaca + 35% ABJ + 25% Laporan
  * Confidence "lemah" (no ABJ):  65% Cuaca + 35% Laporan
  *
+ * STRATEGI CACHE:
+ *   - Data cuaca di-fetch dari Open-Meteo API HANYA jika belum ada di data_cuaca
+ *     untuk hari ini. Cache berlaku seharian penuh.
+ *   - Refresh harian via scheduler `skor-risiko:refresh-cuaca` jam 6 pagi.
+ *   - Skor risiko selalu dihitung ulang dari data cuaca yang sudah di-cache
+ *     (kalkulasi lokal, ~1-5ms per wilayah).
+ *
  * Single source of truth — dipakai oleh:
- *   - SkorRisikoController@show  (real-time)
- *   - HitungSkorRisikoJob        (background/queue)
+ *   - SkorRisikoController@show  (real-time, pakai cache)
+ *   - HitungSkorRisikoJob        (background/queue, bisa paksa refresh)
  */
 class RiskScoreService
 {
     protected array $urutanLevel = ['rendah' => 1, 'sedang' => 2, 'tinggi' => 3];
+
+    /**
+     * Berapa jam cache cuaca dianggap masih segar.
+     * Default 24 jam — data cuaca tidak berubah signifikan dalam sehari.
+     */
+    protected int $cacheTtlHours = 24;
 
     public function __construct(
         protected NotificationService $notificationService,
@@ -36,12 +49,13 @@ class RiskScoreService
     /**
      * Hitung dan simpan skor risiko untuk 1 wilayah — historis + prediksi.
      *
+     * @param bool $paksaRefresh  Jika true, lewati cache dan fetch ulang dari Open-Meteo API
      * @return array Dua elemen: ['historis' => SkorRisiko[], 'prediksi' => PrediksiRisiko[]]
      */
-    public function hitungDanSimpan(Wilayah $wilayah, string $jenisPenyakit = 'dbd'): array
+    public function hitungDanSimpan(Wilayah $wilayah, string $jenisPenyakit = 'dbd', bool $paksaRefresh = false): array
     {
-        // 1. Fetch cuaca 14 hari historis + 16 hari forecast
-        $dataCuaca = $this->weatherService->fetchFullRange($wilayah);
+        // ── 1. Dapatkan data cuaca (cache-first) ──────────────────────
+        $dataCuaca = $this->dapatkanCuaca($wilayah, $paksaRefresh);
 
         if (empty($dataCuaca)) {
             return ['historis' => [], 'prediksi' => []];
@@ -50,20 +64,20 @@ class RiskScoreService
         // Urutkan berdasarkan tanggal
         usort($dataCuaca, fn($a, $b) => $a->tanggal <=> $b->tanggal);
 
-        // 2. Hitung ABJ & laporan warga (komponen non-cuaca)
+        // ── 2. Hitung ABJ & laporan warga (komponen non-cuaca) ─────────
         $abjInfo = $this->hitungSkorAbj($wilayah);
         $laporanScore = $this->hitungSkorLaporan($wilayah);
         $confidence = $abjInfo['confidence'];
         $elevasi = $wilayah->elevasi !== null ? (float) $wilayah->elevasi : null;
 
-        // 3. Hitung rolling 7-day precipitation
+        // ── 3. Hitung rolling 7-day precipitation ─────────────────────
         $hujanPerTanggal = [];
         foreach ($dataCuaca as $cuaca) {
             $hujanPerTanggal[$cuaca->tanggal->toDateString()] = (float) ($cuaca->curah_hujan ?? 0);
         }
         $rolling7Hari = SkorCuacaCalculator::hitungRolling7Hari($hujanPerTanggal);
 
-        // 4. Hitung skor untuk setiap tanggal
+        // ── 4. Hitung skor untuk setiap tanggal ───────────────────────
         $today = Carbon::today('Asia/Jakarta');
         $tanggalPerhitungan = $today->toDateString();
         $historis = [];
@@ -94,24 +108,23 @@ class RiskScoreService
             $levelBaru = SkorCuacaCalculator::tentukanLevel($skorAkhir);
 
             $faktor = [
-                'skor_cuaca'           => round($skorCuacaFinal, 2),
-                'skor_cuaca_mentah'    => round($skorCuaca, 2),
-                'f_suhu'               => round(SkorCuacaCalculator::fSuhu($suhu), 2),
-                'f_hujan'              => round(SkorCuacaCalculator::fHujan($hujan7), 2),
-                'f_lembap'             => round(SkorCuacaCalculator::fLembap($lembap), 2),
-                'suhu'                 => $suhu,
-                'curah_hujan'          => (float) ($cuaca->curah_hujan ?? 0),
-                'akumulasi_hujan_7hari'=> round($hujan7, 2),
-                'kelembapan'           => $lembap,
-                'elevasi'              => $elevasi,
-                'penalti_elevasi'      => $skorCuacaFinal !== $skorCuaca,
-                'skor_abj'             => $abjInfo['skor'],
-                'skor_laporan'         => $laporanScore,
-                'abj_persen'           => $abjInfo['abj_persen'],
+                'skor_cuaca'            => round($skorCuacaFinal, 2),
+                'skor_cuaca_mentah'     => round($skorCuaca, 2),
+                'f_suhu'                => round(SkorCuacaCalculator::fSuhu($suhu), 2),
+                'f_hujan'               => round(SkorCuacaCalculator::fHujan($hujan7), 2),
+                'f_lembap'              => round(SkorCuacaCalculator::fLembap($lembap), 2),
+                'suhu'                  => $suhu,
+                'curah_hujan'           => (float) ($cuaca->curah_hujan ?? 0),
+                'akumulasi_hujan_7hari' => round($hujan7, 2),
+                'kelembapan'            => $lembap,
+                'elevasi'               => $elevasi,
+                'penalti_elevasi'       => $skorCuacaFinal !== $skorCuaca,
+                'skor_abj'              => $abjInfo['skor'],
+                'skor_laporan'          => $laporanScore,
+                'abj_persen'            => $abjInfo['abj_persen'],
             ];
 
             if ($isForecast) {
-                // ── Simpan ke prediksi_risiko ──────────────────────────
                 $record = PrediksiRisiko::updateOrCreate(
                     [
                         'wilayah_kode'        => $wilayah->kode,
@@ -128,7 +141,6 @@ class RiskScoreService
                 );
                 $prediksi[] = $record;
             } else {
-                // ── Simpan ke skor_risiko ──────────────────────────────
                 // Cek skor sebelumnya untuk notifikasi
                 $skorSebelumnya = SkorRisiko::where('wilayah_kode', $wilayah->kode)
                     ->where('jenis_penyakit', $jenisPenyakit)
@@ -151,24 +163,63 @@ class RiskScoreService
                     ]
                 );
 
-                // Notifikasi jika level naik
-                if ($skorSebelumnya && isset($this->urutanLevel[$levelBaru])
-                    && $this->urutanLevel[$levelBaru] > $this->urutanLevel[$skorSebelumnya->level_risiko]) {
-                    $this->notificationService->notifikasiKenaikanRisiko(
-                        $wilayah, $jenisPenyakit, $skorSebelumnya->level_risiko, $levelBaru
-                    );
-                }
+                // Notifikasi hanya saat background job (tidak saat realtime view)
+                if ($paksaRefresh) {
+                    if ($skorSebelumnya && isset($this->urutanLevel[$levelBaru])
+                        && $this->urutanLevel[$levelBaru] > $this->urutanLevel[$skorSebelumnya->level_risiko]) {
+                        $this->notificationService->notifikasiKenaikanRisiko(
+                            $wilayah, $jenisPenyakit, $skorSebelumnya->level_risiko, $levelBaru
+                        );
+                    }
 
-                // Notifikasi cuaca ekstrem (curah hujan > 30 mm/hari)
-                if ($cuaca->curah_hujan && $cuaca->curah_hujan > 30) {
-                    $this->notificationService->notifikasiCuacaEkstrem($wilayah, $cuaca->curah_hujan);
+                    if ($cuaca->curah_hujan && $cuaca->curah_hujan > 30) {
+                        $this->notificationService->notifikasiCuacaEkstrem($wilayah, $cuaca->curah_hujan);
+                    }
                 }
 
                 $historis[] = $record;
             }
         }
 
-        return ['historis' => $historis, 'prediksi' => $prediksi];
+        return [
+            'historis' => $historis,
+            'prediksi' => $prediksi,
+            'dari_cache' => !$paksaRefresh,
+        ];
+    }
+
+    /**
+     * Ambil data cuaca: cache-first, fallback ke Open-Meteo API.
+     *
+     * Cache dianggap segar jika:
+     *   - Ada data untuk hari ini (tanggal = today, is_forecast = false)
+     *   - Data di-update dalam 24 jam terakhir
+     *
+     * @return DataCuaca[]
+     */
+    protected function dapatkanCuaca(Wilayah $wilayah, bool $paksaRefresh = false): array
+    {
+        $today = Carbon::today('Asia/Jakarta')->toDateString();
+
+        // Cek apakah cache masih segar
+        if (!$paksaRefresh) {
+            $cacheSegar = DataCuaca::where('wilayah_kode', $wilayah->kode)
+                ->where('tanggal', $today)
+                ->where('is_forecast', false)
+                ->where('updated_at', '>=', now()->subHours($this->cacheTtlHours))
+                ->exists();
+
+            if ($cacheSegar) {
+                // Pakai data dari database — TIDAK narik API
+                return DataCuaca::where('wilayah_kode', $wilayah->kode)
+                    ->orderBy('tanggal')
+                    ->get()
+                    ->all();
+            }
+        }
+
+        // Cache tidak ada atau basi → fetch dari Open-Meteo API
+        return $this->weatherService->fetchFullRange($wilayah);
     }
 
     /* ── Komponen non-cuaca ────────────────────────────────────────────────── */

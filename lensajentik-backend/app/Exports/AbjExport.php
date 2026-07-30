@@ -19,7 +19,7 @@ class AbjExport implements FromCollection, WithHeadings, WithMapping, WithStyles
     public function collection()
     {
         $query = AbjLaporan::where('wilayah_kode', $this->wilayahKode)
-            ->with(['kader:id,name', 'wilayah:kode,nama'])
+            ->with(['user:id,nama', 'wilayah:kode,nama'])
             ->orderBy('tanggal_pemeriksaan');
 
         if ($this->dariTanggal) {
@@ -51,9 +51,9 @@ class AbjExport implements FromCollection, WithHeadings, WithMapping, WithStyles
         return [
             $row->tanggal_pemeriksaan->format('d-m-Y'),
             $row->wilayah->nama ?? '-',
-            $row->kader->name ?? '-',
+            $row->user->nama ?? '-',
             $row->jumlah_rumah_diperiksa,
-            $row->jumlah_rumah_positif_jentik,
+            $row->jumlah_rumah_positif,
             $row->abj_persen,
             $row->catatan ?? '-',
         ];

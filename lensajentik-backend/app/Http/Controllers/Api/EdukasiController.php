@@ -8,14 +8,14 @@ use Illuminate\Http\Request;
 class EdukasiController extends Controller
 {
     /**
-     * GET /api/edukasi?tipe=artikel
+     * GET /api/edukasi?kategori=dbd
      */
     public function index(Request $request)
     {
         $query = KontenEdukasi::query()->latest();
 
-        if ($request->filled('tipe')) {
-            $query->where('tipe', $request->tipe);
+        if ($request->filled('kategori')) {
+            $query->where('kategori', $request->kategori);
         }
 
         return response()->json($query->paginate(10));

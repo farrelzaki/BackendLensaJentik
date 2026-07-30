@@ -18,15 +18,18 @@ class AuthController extends Controller
     public function register(Request $request)
     {
         $request->validate([
-            'name'         => 'required|string|max:255',
+            'nama'         => 'required|string|max:255',
+            'name'         => 'sometimes|string|max:255', // alias
             'email'        => 'required|string|email|max:255|unique:users',
             'password'     => ['required', 'confirmed', PasswordRule::min(8)],
             'phone'        => 'nullable|string|max:20',
             'wilayah_kode' => 'nullable|exists:wilayah,kode',
         ]);
 
+        $nama = $request->nama ?? $request->name ?? '';
+
         $user = User::create([
-            'name'         => $request->name,
+            'nama'         => $nama,
             'email'        => $request->email,
             'password'     => Hash::make($request->password),
             'role'         => 'warga', // hardcode, gak boleh diisi dari input user
@@ -100,7 +103,8 @@ class AuthController extends Controller
         $user = $request->user();
 
         $validated = $request->validate([
-            'name'                  => 'sometimes|string|max:255',
+            'nama'                  => 'sometimes|string|max:255',
+            'name'                  => 'sometimes|string|max:255', // alias untuk kompatibilitas frontend
             'phone'                 => 'sometimes|nullable|string|max:20',
             'current_password'      => 'required_with:password|string',
             'password'              => 'sometimes|string|min:8|confirmed',
@@ -117,8 +121,9 @@ class AuthController extends Controller
         }
 
         // Ambil hanya field yang boleh diupdate (email & role tidak boleh diubah lewat sini)
+        $nama = $validated['nama'] ?? $validated['name'] ?? null;
         $updateData = array_filter([
-            'name'  => $validated['name']  ?? null,
+            'nama'  => $nama,
             'phone' => array_key_exists('phone', $validated) ? $validated['phone'] : null,
         ], fn($v) => $v !== null);
 
@@ -140,6 +145,7 @@ class AuthController extends Controller
             'data'    => $user->fresh()->makeHidden(['password', 'remember_token']),
         ]);
     }
+
     /**
      * POST /api/auth/forgot-password
      * Minta token reset password. Pesan response SELALU generik untuk mencegah enumerasi email.
@@ -155,7 +161,7 @@ class AuthController extends Controller
             function (User $user, string $token) {
                 // Kirim email pakai template kustom kita (bukan default Laravel)
                 Mail::send('emails.reset-password', [
-                    'name'  => $user->name,
+                    'nama'  => $user->nama,
                     'token' => $token,
                 ], function ($mail) use ($user) {
                     $mail->to($user->email)->subject('Reset Password LensaJentik');

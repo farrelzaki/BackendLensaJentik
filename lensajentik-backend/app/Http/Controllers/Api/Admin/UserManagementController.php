@@ -26,7 +26,7 @@ class UserManagementController extends Controller
             $query->where('wilayah_kode', $request->wilayah_kode);
         }
 
-        return response()->json($query->orderBy('name')->paginate(20));
+        return response()->json($query->orderBy('nama')->paginate(20));
     }
 
     /**
@@ -36,7 +36,8 @@ class UserManagementController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name' => 'required|string|max:255',
+            'nama' => 'required|string|max:255',
+            'name' => 'sometimes|string|max:255', // alias
             'email' => 'required|email|unique:users',
             'password' => ['required', Password::min(8)],
             'role' => 'required|in:kader,admin_puskesmas,admin_dinkes',
@@ -44,9 +45,15 @@ class UserManagementController extends Controller
             'phone' => 'nullable|string|max:20',
         ]);
 
+        $nama = $validated['nama'] ?? $validated['name'] ?? '';
+
         $user = User::create([
-            ...$validated,
-            'password' => Hash::make($validated['password']),
+            'nama'         => $nama,
+            'email'        => $validated['email'],
+            'password'     => Hash::make($validated['password']),
+            'role'         => $validated['role'],
+            'wilayah_kode' => $validated['wilayah_kode'] ?? null,
+            'phone'        => $validated['phone'] ?? null,
         ]);
 
         return response()->json(['message' => 'Akun berhasil dibuat', 'data' => $user], 201);
@@ -65,12 +72,19 @@ class UserManagementController extends Controller
         }
 
         $validated = $request->validate([
-            'name' => 'sometimes|string|max:255',
+            'nama' => 'sometimes|string|max:255',
+            'name' => 'sometimes|string|max:255', // alias
             'role' => 'sometimes|in:warga,kader,admin_puskesmas,admin_dinkes',
             'wilayah_kode' => 'sometimes|nullable|exists:wilayah,kode',
             'phone' => 'sometimes|nullable|string|max:20',
             'is_active' => 'sometimes|boolean',
         ]);
+
+        // Map 'name' → 'nama' untuk kompatibilitas
+        if (isset($validated['name']) && !isset($validated['nama'])) {
+            $validated['nama'] = $validated['name'];
+        }
+        unset($validated['name']);
 
         $user->update($validated);
 

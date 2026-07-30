@@ -46,7 +46,7 @@ class ExportController extends Controller
         $wilayah = Wilayah::find($request->wilayah_kode);
 
         $query = AbjLaporan::where('wilayah_kode', $request->wilayah_kode)
-            ->with('kader:id,name')
+            ->with('user:id,nama')
             ->orderBy('tanggal_pemeriksaan');
 
         if ($request->dari) $query->where('tanggal_pemeriksaan', '>=', $request->dari);

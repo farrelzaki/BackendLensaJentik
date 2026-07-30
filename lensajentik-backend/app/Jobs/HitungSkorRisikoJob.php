@@ -40,7 +40,8 @@ class HitungSkorRisikoJob implements ShouldQueue
             return;
         }
 
-        $hasil = $riskScoreService->hitungDanSimpan($wilayah, $this->jenisPenyakit);
+        // paksaRefresh=true → background job narik API Open-Meteo untuk update data harian
+        $hasil = $riskScoreService->hitungDanSimpan($wilayah, $this->jenisPenyakit, paksaRefresh: true);
 
         $nHistoris = count($hasil['historis']);
         $nPrediksi = count($hasil['prediksi']);

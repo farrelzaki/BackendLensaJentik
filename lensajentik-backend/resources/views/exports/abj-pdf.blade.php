@@ -31,9 +31,9 @@
             @foreach ($data as $row)
             <tr>
                 <td>{{ $row->tanggal_pemeriksaan->format('d-m-Y') }}</td>
-                <td>{{ $row->kader->name ?? '-' }}</td>
+                <td>{{ $row->user->nama ?? '-' }}</td>
                 <td>{{ $row->jumlah_rumah_diperiksa }}</td>
-                <td>{{ $row->jumlah_rumah_positif_jentik }}</td>
+                <td>{{ $row->jumlah_rumah_positif }}</td>
                 <td class="{{ $row->abj_persen < 95 ? 'abj-rendah' : '' }}">{{ $row->abj_persen }}%</td>
                 <td>{{ $row->catatan ?? '-' }}</td>
             </tr>

@@ -10,14 +10,18 @@ class User extends Authenticatable
     use HasApiTokens, Notifiable;
 
     protected $fillable = [
-        'name', 'email', 'password', 'role', 'wilayah_kode', 'poin', 'kuota_subscribe', 'phone', 'is_active',
+        'nama', 'email', 'password', 'role', 'wilayah_kode', 'poin', 'kuota_subscribe', 'phone', 'is_active', 'status_verifikasi',
     ];
 
     protected $hidden = ['password', 'remember_token'];
 
     protected function casts(): array
     {
-        return ['email_verified_at' => 'datetime', 'password' => 'hashed'];
+        return [
+            'email_verified_at' => 'datetime',
+            'password' => 'hashed',
+            'status_verifikasi' => 'boolean',
+        ];
     }
 
     public function wilayahTugas()
@@ -27,7 +31,7 @@ class User extends Authenticatable
 
     public function abjLaporan()
     {
-        return $this->hasMany(AbjLaporan::class, 'kader_id');
+        return $this->hasMany(AbjLaporan::class, 'user_id');
     }
 
     public function laporanWarga()

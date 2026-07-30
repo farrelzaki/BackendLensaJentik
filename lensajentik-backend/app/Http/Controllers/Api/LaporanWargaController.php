@@ -24,11 +24,13 @@ class LaporanWargaController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'wilayah_kode' => 'nullable|exists:wilayah,kode',
-            'latitude' => 'required|numeric|between:-90,90',
-            'longitude' => 'required|numeric|between:-180,180',
-            'foto' => 'required|image|mimes:jpeg,jpg,png|max:5120',
-            'deskripsi' => 'nullable|string|max:500',
+            'wilayah_kode'  => 'nullable|exists:wilayah,kode',
+            'latitude'      => 'required|numeric|between:-90,90',
+            'longitude'     => 'required|numeric|between:-180,180',
+            'foto'          => 'required|image|mimes:jpeg,jpg,png|max:5120',
+            'deskripsi'     => 'nullable|string|max:500',
+            'nama_pelapor'  => 'nullable|string|max:255',
+            'is_anonim'     => 'nullable|boolean',
         ]);
 
         // Auto-resolve wilayah_kode dari koordinat jika tidak diberikan
@@ -45,13 +47,16 @@ class LaporanWargaController extends Controller
         $user = Auth::guard('sanctum')->user();
 
         $laporan = LaporanWarga::create([
-            'user_id' => $user?->id,
-            'wilayah_kode' => $wilayahKode,
-            'latitude' => $validated['latitude'],
-            'longitude' => $validated['longitude'],
-            'foto_path' => $fotoUrl,
-            'deskripsi' => $validated['deskripsi'] ?? null,
-            'status' => 'belum_ditangani',
+            'user_id'       => $user?->id,
+            'session_id'    => $user ? null : ($request->session()->getId() ?? null),
+            'nama_pelapor'  => $validated['nama_pelapor'] ?? ($user?->nama),
+            'wilayah_kode'  => $wilayahKode,
+            'latitude'      => $validated['latitude'],
+            'longitude'     => $validated['longitude'],
+            'foto_path'     => $fotoUrl,
+            'deskripsi'     => $validated['deskripsi'] ?? null,
+            'is_anonim'     => $validated['is_anonim'] ?? (!$user),
+            'status'        => 'belum_ditangani',
         ]);
 
         // Gamifikasi: +10 poin untuk user login
@@ -105,7 +110,7 @@ class LaporanWargaController extends Controller
      */
     public function index(Request $request)
     {
-        $query = LaporanWarga::with('user:id,name')->latest();
+        $query = LaporanWarga::with('user:id,nama')->latest();
 
         if ($request->filled('wilayah_kode')) {
             $query->where('wilayah_kode', $request->wilayah_kode);
@@ -123,7 +128,7 @@ class LaporanWargaController extends Controller
      */
     public function show(string $id)
     {
-        $laporan = LaporanWarga::with(['user:id,name', 'verifikasi.user:id,name'])->find($id);
+        $laporan = LaporanWarga::with(['user:id,nama', 'verifikasi.user:id,nama'])->find($id);
 
         if (!$laporan) {
             return response()->json(['message' => 'Laporan tidak ditemukan'], 404);
@@ -165,7 +170,12 @@ class LaporanWargaController extends Controller
             return response()->json(['message' => 'Laporan tidak ditemukan'], 404);
         }
 
-        $sudahVerifikasi = VerifikasiLaporan::where('laporan_id', $id)
+        $validated = $request->validate([
+            'status_verifikasi' => 'required|in:valid,tidak_valid',
+            'catatan'           => 'nullable|string|max:500',
+        ]);
+
+        $sudahVerifikasi = VerifikasiLaporan::where('laporan_warga_id', $id)
             ->where('user_id', $request->user()->id)
             ->exists();
 
@@ -174,17 +184,22 @@ class LaporanWargaController extends Controller
         }
 
         VerifikasiLaporan::create([
-            'laporan_id' => $id,
-            'user_id' => $request->user()->id,
+            'laporan_warga_id'  => $id,
+            'user_id'           => $request->user()->id,
+            'status_verifikasi' => $validated['status_verifikasi'],
+            'catatan'           => $validated['catatan'] ?? null,
         ]);
 
-        $laporan->increment('jumlah_verifikasi'); // increment di tabel laporan boleh pakai query langsung
+        $laporan->increment('jumlah_verifikasi');
 
         // Pakai save() agar UserObserver terpicu dan kuota_subscribe ikut diupdate
         $verifikator = $request->user();
         $verifikator->poin += 5;
         $verifikator->save();
 
-        return response()->json(['message' => 'Verifikasi berhasil', 'jumlah_verifikasi' => $laporan->jumlah_verifikasi]);
+        return response()->json([
+            'message' => 'Verifikasi berhasil',
+            'jumlah_verifikasi' => $laporan->jumlah_verifikasi,
+        ]);
     }
 }

@@ -20,7 +20,7 @@ class DemoDataSeeder extends Seeder
         $admin = User::firstOrCreate(
             ['email' => 'farrelmzaki77@gmail.com'],
             [
-                'name' => 'Admin LensaJentik',
+                'nama' => 'Admin LensaJentik',
                 'password' => $password,
                 'role' => 'admin_dinkes',
                 'is_active' => true,
@@ -32,7 +32,7 @@ class DemoDataSeeder extends Seeder
         $kader = User::firstOrCreate(
             ['email' => 'farjeng77@gmail.com'],
             [
-                'name' => 'Kader Jentik Patrang',
+                'nama' => 'Kader Jentik Patrang',
                 'password' => $password,
                 'role' => 'kader',
                 'is_active' => true,
@@ -45,7 +45,7 @@ class DemoDataSeeder extends Seeder
         $warga = User::firstOrCreate(
             ['email' => 'sekunifril@gmail.com'],
             [
-                'name' => 'Sekun Ifril (Warga)',
+                'nama' => 'Sekun Ifril (Warga)',
                 'password' => $password,
                 'role' => 'warga',
                 'is_active' => true,
@@ -56,8 +56,8 @@ class DemoDataSeeder extends Seeder
 
         // --- SEED HISTORI ABJ (KADER) ---
         // Bersihkan dulu kalau sudah ada biar gak dobel saat seeder dijalankan ulang
-        AbjLaporan::where('kader_id', $kader->id)->delete();
-        
+        AbjLaporan::where('user_id', $kader->id)->delete();
+
         $jumlahMinggu = 4;
         for ($i = $jumlahMinggu; $i >= 0; $i--) {
             // Generate data ABJ seminggu sekali selama 4 minggu terakhir + minggu ini
@@ -67,11 +67,11 @@ class DemoDataSeeder extends Seeder
             $abjPersen = (($diperiksa - $positif) / $diperiksa) * 100;
 
             AbjLaporan::create([
-                'kader_id' => $kader->id,
+                'user_id' => $kader->id,
                 'wilayah_kode' => $kader->wilayah_kode,
                 'tanggal_pemeriksaan' => $tanggal,
                 'jumlah_rumah_diperiksa' => $diperiksa,
-                'jumlah_rumah_positif_jentik' => $positif,
+                'jumlah_rumah_positif' => $positif,
                 'abj_persen' => round($abjPersen, 2),
                 'catatan' => $positif > 0 ? 'Ditemukan jentik di beberapa bak mandi' : 'Semua bersih'
             ]);
@@ -80,7 +80,7 @@ class DemoDataSeeder extends Seeder
         // --- SEED HISTORI LAPORAN (WARGA) ---
         LaporanWarga::where('user_id', $warga->id)->delete();
 
-        $statusOptions = ['belum_ditangani', 'sedang_diproses', 'selesai'];
+        $statusOptions = ['belum_ditangani', 'diproses', 'selesai'];
         $fotoDummies = [
             'https://res.cloudinary.com/demo/image/upload/sample.jpg',
             'https://res.cloudinary.com/demo/image/upload/v1612456485/sample.jpg',

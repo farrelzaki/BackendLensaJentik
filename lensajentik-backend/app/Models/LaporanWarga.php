@@ -6,7 +6,15 @@ use Illuminate\Database\Eloquent\Model;
 class LaporanWarga extends Model
 {
     protected $table = 'laporan_warga';
-    protected $fillable = ['user_id', 'wilayah_kode', 'latitude', 'longitude', 'foto_path', 'deskripsi', 'status', 'jumlah_verifikasi'];
+    protected $fillable = [
+        'user_id', 'session_id', 'nama_pelapor', 'wilayah_kode',
+        'latitude', 'longitude', 'foto_path', 'alamat_text',
+        'deskripsi', 'is_anonim', 'status', 'jumlah_verifikasi',
+    ];
+
+    protected $casts = [
+        'is_anonim' => 'boolean',
+    ];
 
     public function user()
     {
@@ -20,6 +28,6 @@ class LaporanWarga extends Model
 
     public function verifikasi()
     {
-        return $this->hasMany(VerifikasiLaporan::class, 'laporan_id');
+        return $this->hasMany(VerifikasiLaporan::class, 'laporan_warga_id');
     }
 }
