@@ -145,6 +145,12 @@ class SkorRisikoController extends Controller
                         ->where('sr.is_prediksi', '=', $isPrediksi)
                         ->whereDate('sr.tanggal', '=', $tanggal);
                 })
+                ->leftJoin('skor_risiko as sr_parent', function ($join) use ($jenis, $tanggal, $isPrediksi) {
+                    $join->on('sr_parent.wilayah_kode', '=', 'parent.kode')
+                        ->where('sr_parent.jenis_penyakit', '=', $jenis)
+                        ->where('sr_parent.is_prediksi', '=', $isPrediksi)
+                        ->whereDate('sr_parent.tanggal', '=', $tanggal);
+                })
                 ->where('parent.tingkat', '=', $tingkat);
 
             if ($request->filled('parent_kode')) {
@@ -157,7 +163,7 @@ class SkorRisikoController extends Controller
                     'parent.nama as parent_nama',
                     'parent.latitude',
                     'parent.longitude',
-                    \DB::raw('ROUND(AVG(sr.skor)::numeric, 1) as skor'),
+                    \DB::raw('ROUND(COALESCE(AVG(sr.skor), AVG(sr_parent.skor))::numeric, 1) as skor'),
                     \DB::raw('COUNT(DISTINCT child.kode) as jumlah_kecamatan'),
                     \DB::raw('COUNT(DISTINCT sr.wilayah_kode) as kecamatan_dengan_data')
                 );
