@@ -28,9 +28,13 @@ class GeocodeController extends Controller
         $request->validate(['queries' => 'required|array|min:1|max:50']);
         $results = [];
         foreach ($request->queries as $q) {
-            $nama = explode(',', $q)[0];
-            $results[$nama] = $this->fetchNominatimGeojson($q);
-            // Tanpa jeda — Nominatim toleransi untuk batch kecil
+            $nama = trim(explode(',', $q)[0]);
+            $geojson = $this->fetchNominatimGeojson($q);
+            // Simpan dengan key asli DAN lowercase trimmed untuk matching yang fleksibel
+            $results[$nama] = $geojson;
+            $results[strtolower($nama)] = $geojson;
+            // Jeda 300ms agar tidak kena rate-limit Nominatim (policy: max 1 req/sec)
+            usleep(300000);
         }
         return response()->json(['results' => $results]);
     }
@@ -43,13 +47,33 @@ class GeocodeController extends Controller
                 ->get('https://nominatim.openstreetmap.org/search', [
                     'q' => $query,
                     'format' => 'json',
-                    'limit' => 3,
+                    'limit' => 5,
                     'polygon_geojson' => 1,
+                    'addressdetails' => 0,
                 ]);
             $data = $response->json();
             if (empty($data)) return null;
-            $best = collect($data)->first(fn($g) => isset($g['geojson']) && str_contains($g['geojson']['type'] ?? '', 'Polygon'))
-                ?? collect($data)->first(fn($g) => isset($g['geojson']));
+
+            // 1. Utamakan boundary administratif dengan polygon (kecamatan/kabupaten)
+            $best = collect($data)->first(
+                fn($g) => ($g['class'] ?? '') === 'boundary'
+                    && ($g['type'] ?? '') === 'administrative'
+                    && isset($g['geojson'])
+                    && str_contains($g['geojson']['type'] ?? '', 'Polygon')
+            );
+
+            // 2. Fallback: boundary apapun dengan polygon
+            if (!$best) {
+                $best = collect($data)->first(
+                    fn($g) => isset($g['geojson']) && str_contains($g['geojson']['type'] ?? '', 'Polygon')
+                );
+            }
+
+            // 3. Fallback terakhir: data pertama yang ada geojson
+            if (!$best) {
+                $best = collect($data)->first(fn($g) => isset($g['geojson']));
+            }
+
             return $best['geojson'] ?? null;
         } catch (\Exception $e) {
             return null;
