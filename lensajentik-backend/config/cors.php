@@ -19,7 +19,10 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => ['*'],
+    // Gunakan env variable FRONTEND_URL untuk kontrol per-environment.
+    // Di production Railway: set FRONTEND_URL=https://domain-frontend-anda.vercel.app
+    // Di lokal: biarkan wildcard '*' atau set ke http://localhost:5173
+    'allowed_origins' => array_filter(array_map('trim', explode(',', env('FRONTEND_URL', '*')))),
 
     'allowed_origins_patterns' => [],
 

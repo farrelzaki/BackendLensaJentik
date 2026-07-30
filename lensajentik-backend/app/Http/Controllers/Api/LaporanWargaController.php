@@ -41,8 +41,11 @@ class LaporanWargaController extends Controller
         ]);
 
         // Kasih poin kalau user login (gamifikasi)
+        // CATATAN: pakai $user->save() bukan increment() supaya Eloquent events terpicu
+        // dan UserObserver bisa kalkulasi ulang kuota_subscribe + kirim notifikasi reward.
         if ($user) {
-            $user->increment('poin', 10);
+            $user->poin += 10;
+            $user->save();
         }
 
         return response()->json(['message' => 'Laporan berhasil dikirim', 'data' => $laporan], 201);
@@ -126,8 +129,12 @@ class LaporanWargaController extends Controller
             'user_id' => $request->user()->id,
         ]);
 
-        $laporan->increment('jumlah_verifikasi');
-        $request->user()->increment('poin', 5);
+        $laporan->increment('jumlah_verifikasi'); // increment di tabel laporan boleh pakai query langsung
+
+        // Pakai save() agar UserObserver terpicu dan kuota_subscribe ikut diupdate
+        $verifikator = $request->user();
+        $verifikator->poin += 5;
+        $verifikator->save();
 
         return response()->json(['message' => 'Verifikasi berhasil', 'jumlah_verifikasi' => $laporan->jumlah_verifikasi]);
     }

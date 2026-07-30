@@ -9,7 +9,6 @@ use App\Http\Controllers\Api\SkorRisikoController;
 use App\Http\Controllers\Api\AbjLaporanController;
 use App\Http\Controllers\Api\LaporanWargaController;
 use App\Http\Controllers\Api\Admin\UserManagementController;
-use App\Http\Controllers\Api\Admin\DashboardController;
 use App\Http\Controllers\Api\SubscribeWilayahController;
 use App\Http\Controllers\Api\NotifikasiController;
 use App\Http\Controllers\Api\ExportController;
@@ -55,12 +54,6 @@ Route::middleware(['auth:sanctum', 'role:admin_puskesmas,admin_dinkes'])->prefix
         Route::patch('/{id}', [UserManagementController::class, 'update']);
         Route::delete('/{id}', [UserManagementController::class, 'destroy']);
     });
-
-    Route::prefix('dashboard')->group(function () {
-        Route::get('/ringkasan', [DashboardController::class, 'ringkasan']);
-        Route::get('/bandingkan', [DashboardController::class, 'bandingkan']);
-        Route::get('/export-mentah', [DashboardController::class, 'exportMentah']);
-    });
 });
 
 // ABJ — wajib login, role apapun
@@ -92,12 +85,18 @@ Route::get('/skor-risiko/{kode}', [SkorRisikoController::class, 'show']);
 Route::get('/cuaca/{kode}', [CuacaController::class, 'show']);
 
 Route::prefix('auth')->group(function () {
-    Route::post('/register', [AuthController::class, 'register']);
-    Route::post('/login', [AuthController::class, 'login']);
+    // Rate limiting: register 5x/menit per IP, login 10x/menit per IP (lebih ketat dari register)
+    Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:5,1');
+    Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
+
+    // Password reset — publik (tidak butuh login), rate limit ketat untuk cegah spam/enumerasi
+    Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:5,1');
+    Route::post('/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:5,1');
 
     Route::middleware('auth:sanctum')->group(function () {
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/me', [AuthController::class, 'me']);
+        Route::patch('/update-profile', [AuthController::class, 'updateProfile']);
     });
 });
 
