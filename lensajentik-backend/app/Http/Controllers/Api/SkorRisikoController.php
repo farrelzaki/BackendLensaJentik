@@ -7,6 +7,7 @@ use App\Models\SkorRisiko;
 use App\Services\RiskScoreService;
 use App\Services\WeatherService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class SkorRisikoController extends Controller
 {
@@ -43,15 +44,24 @@ class SkorRisikoController extends Controller
     }
 
     /**
+     * GET /api/skor-risiko/peta?tingkat=kabupaten&jenis=dbd
      * GET /api/skor-risiko/peta?tingkat=kecamatan&parent_kode=3201&jenis=dbd
-     * Untuk render peta: skor risiko hari ini semua wilayah dalam 1 area (misal semua kecamatan di 1 kabupaten).
-     * Catatan: ini ambil dari data yang SUDAH dihitung sebelumnya (gak realtime), karena hitung semua sekaligus terlalu berat untuk 1 request.
+     *
+     * Untuk render peta: skor risiko hari ini.
+     * - Jika parent_kode diberikan: semua wilayah dalam 1 area (misal semua kecamatan di 1 kabupaten).
+     * - Jika parent_kode TIDAK diberikan: SEMUA wilayah pada tingkat tersebut (skala nasional).
+     *   Contoh: ?tingkat=kabupaten → seluruh kabupaten/kota di Indonesia.
+     *
+     * Strategi query:
+     * - kecamatan/desa: query langsung dari skor_risiko (data sudah ada per wilayah).
+     * - kabupaten/provinsi: agregasi dari skor_risiko kecamatan anak (AVG skor),
+     *   karena skor_risiko hanya di-generate di tingkat kecamatan.
      */
     public function peta(Request $request)
     {
         $request->validate([
-            'tingkat' => 'required|in:kabupaten,kecamatan,desa',
-            'parent_kode' => 'required|string',
+            'tingkat' => 'required|in:provinsi,kabupaten,kecamatan,desa',
+            'parent_kode' => 'nullable|string',
             'level_risiko' => 'nullable|in:rendah,sedang,tinggi',
             'tanggal' => 'nullable|date',
         ]);
@@ -59,21 +69,128 @@ class SkorRisikoController extends Controller
         $jenis = $request->query('jenis', 'dbd');
         $tanggal = $request->query('tanggal', now()->timezone('Asia/Jakarta')->toDateString());
         $isPrediksi = $tanggal !== now()->timezone('Asia/Jakarta')->toDateString();
+        $tingkat = $request->tingkat;
 
-        $wilayahList = Wilayah::where('tingkat', $request->tingkat)
-            ->where('parent_kode', $request->parent_kode)
-            ->pluck('kode');
+        // ── Level kecamatan/desa: query langsung ───────────────────────────
+        if (in_array($tingkat, ['kecamatan', 'desa'])) {
+            $wilayahQuery = Wilayah::where('tingkat', $tingkat);
 
-        $query = SkorRisiko::whereIn('wilayah_kode', $wilayahList)
-            ->where('jenis_penyakit', $jenis)
-            ->where('is_prediksi', $isPrediksi)
-            ->whereDate('tanggal', $tanggal)
-            ->with('wilayah:kode,nama,latitude,longitude');
+            if ($request->filled('parent_kode')) {
+                $wilayahQuery->where('parent_kode', $request->parent_kode);
+            }
 
-        if ($request->filled('level_risiko')) {
-            $query->where('level_risiko', $request->level_risiko);
+            $wilayahList = $wilayahQuery->pluck('kode');
+
+            $query = SkorRisiko::whereIn('wilayah_kode', $wilayahList)
+                ->where('jenis_penyakit', $jenis)
+                ->where('is_prediksi', $isPrediksi)
+                ->whereDate('tanggal', $tanggal)
+                ->with('wilayah:kode,nama,latitude,longitude');
+
+            if ($request->filled('level_risiko')) {
+                $query->where('level_risiko', $request->level_risiko);
+            }
+
+            return response()->json(['data' => $query->get()]);
         }
 
-        return response()->json(['data' => $query->get()]);
+        // ── Level kabupaten/provinsi: agregasi dari kecamatan ─────────────
+        // Bangun query agregasi: untuk setiap parent, rata-ratakan skor
+        // kecamatan anak (via rantai parent_kode).
+        if ($tingkat === 'provinsi') {
+            // provinsi → kabupaten → kecamatan → skor_risiko (2 level join)
+            $builder = \DB::table('wilayah as prov')
+                ->join('wilayah as kab', 'kab.parent_kode', '=', 'prov.kode')
+                ->join('wilayah as kec', 'kec.parent_kode', '=', 'kab.kode')
+                ->join('skor_risiko as sr', function ($join) use ($jenis, $tanggal, $isPrediksi) {
+                    $join->on('sr.wilayah_kode', '=', 'kec.kode')
+                        ->where('sr.jenis_penyakit', '=', $jenis)
+                        ->where('sr.is_prediksi', '=', $isPrediksi)
+                        ->whereDate('sr.tanggal', '=', $tanggal);
+                })
+                ->where('prov.tingkat', '=', 'provinsi')
+                ->where('kab.tingkat', '=', 'kabupaten')
+                ->where('kec.tingkat', '=', 'kecamatan');
+
+            if ($request->filled('parent_kode')) {
+                $builder->where('prov.parent_kode', '=', $request->parent_kode);
+            }
+
+            $builder->groupBy('prov.kode', 'prov.nama', 'prov.latitude', 'prov.longitude')
+                ->select(
+                    'prov.kode as parent_kode',
+                    'prov.nama as parent_nama',
+                    'prov.latitude',
+                    'prov.longitude',
+                    \DB::raw('ROUND(AVG(sr.skor)::numeric, 1) as skor'),
+                    \DB::raw('COUNT(DISTINCT kab.kode) as jumlah_kabupaten'),
+                    \DB::raw('COUNT(DISTINCT kec.kode) as jumlah_kecamatan'),
+                    \DB::raw('COUNT(DISTINCT sr.wilayah_kode) as kecamatan_dengan_data')
+                );
+        } else {
+            // kabupaten → kecamatan → skor_risiko (1 level join)
+            $builder = \DB::table('wilayah as parent')
+                ->join('wilayah as child', 'child.parent_kode', '=', 'parent.kode')
+                ->join('skor_risiko as sr', function ($join) use ($jenis, $tanggal, $isPrediksi) {
+                    $join->on('sr.wilayah_kode', '=', 'child.kode')
+                        ->where('sr.jenis_penyakit', '=', $jenis)
+                        ->where('sr.is_prediksi', '=', $isPrediksi)
+                        ->whereDate('sr.tanggal', '=', $tanggal);
+                })
+                ->where('parent.tingkat', '=', $tingkat)
+                ->where('child.tingkat', '=', 'kecamatan');
+
+            if ($request->filled('parent_kode')) {
+                $builder->where('parent.parent_kode', '=', $request->parent_kode);
+            }
+
+            $builder->groupBy('parent.kode', 'parent.nama', 'parent.latitude', 'parent.longitude')
+                ->select(
+                    'parent.kode as parent_kode',
+                    'parent.nama as parent_nama',
+                    'parent.latitude',
+                    'parent.longitude',
+                    \DB::raw('ROUND(AVG(sr.skor)::numeric, 1) as skor'),
+                    \DB::raw('COUNT(DISTINCT child.kode) as jumlah_kecamatan'),
+                    \DB::raw('COUNT(DISTINCT sr.wilayah_kode) as kecamatan_dengan_data')
+                );
+        }
+
+        $aggregated = $builder->get();
+
+        // Tentukan level_risiko berdasarkan skor rata-rata
+        $data = $aggregated->map(function ($row) use ($jenis, $tanggal, $isPrediksi) {
+            $skor = (float) $row->skor;
+            $level = $skor >= 70 ? 'tinggi' : ($skor >= 40 ? 'sedang' : 'rendah');
+
+            return [
+                'wilayah_kode' => $row->parent_kode,
+                'jenis_penyakit' => $jenis,
+                'tanggal' => $tanggal,
+                'is_prediksi' => $isPrediksi,
+                'skor' => $skor,
+                'level_risiko' => $level,
+                'confidence_level' => 'lemah',
+                'faktor_perhitungan' => [
+                    'skor_agregat' => $skor,
+                    'jumlah_kecamatan' => $row->jumlah_kecamatan,
+                    'kecamatan_dengan_data' => $row->kecamatan_dengan_data,
+                    'catatan' => 'Skor rata-rata dari skor cuaca seluruh kecamatan',
+                ],
+                'wilayah' => [
+                    'kode' => $row->parent_kode,
+                    'nama' => $row->parent_nama,
+                    'latitude' => $row->latitude,
+                    'longitude' => $row->longitude,
+                ],
+            ];
+        });
+
+        // Filter level_risiko jika diminta
+        if ($request->filled('level_risiko')) {
+            $data = $data->where('level_risiko', $request->level_risiko);
+        }
+
+        return response()->json(['data' => $data->values()]);
     }
 }
