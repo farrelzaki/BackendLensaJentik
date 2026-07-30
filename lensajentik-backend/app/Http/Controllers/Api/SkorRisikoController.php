@@ -97,20 +97,25 @@ class SkorRisikoController extends Controller
         // ── Level kabupaten/provinsi: agregasi dari kecamatan ─────────────
         // Bangun query agregasi: untuk setiap parent, rata-ratakan skor
         // kecamatan anak (via rantai parent_kode).
+        // Pakai LEFT JOIN agar wilayah TANPA data skor_risiko tetap muncul.
         if ($tingkat === 'provinsi') {
             // provinsi → kabupaten → kecamatan → skor_risiko (2 level join)
             $builder = \DB::table('wilayah as prov')
-                ->join('wilayah as kab', 'kab.parent_kode', '=', 'prov.kode')
-                ->join('wilayah as kec', 'kec.parent_kode', '=', 'kab.kode')
-                ->join('skor_risiko as sr', function ($join) use ($jenis, $tanggal, $isPrediksi) {
+                ->leftJoin('wilayah as kab', function ($join) {
+                    $join->on('kab.parent_kode', '=', 'prov.kode')
+                        ->where('kab.tingkat', '=', 'kabupaten');
+                })
+                ->leftJoin('wilayah as kec', function ($join) {
+                    $join->on('kec.parent_kode', '=', 'kab.kode')
+                        ->where('kec.tingkat', '=', 'kecamatan');
+                })
+                ->leftJoin('skor_risiko as sr', function ($join) use ($jenis, $tanggal, $isPrediksi) {
                     $join->on('sr.wilayah_kode', '=', 'kec.kode')
                         ->where('sr.jenis_penyakit', '=', $jenis)
                         ->where('sr.is_prediksi', '=', $isPrediksi)
                         ->whereDate('sr.tanggal', '=', $tanggal);
                 })
-                ->where('prov.tingkat', '=', 'provinsi')
-                ->where('kab.tingkat', '=', 'kabupaten')
-                ->where('kec.tingkat', '=', 'kecamatan');
+                ->where('prov.tingkat', '=', 'provinsi');
 
             if ($request->filled('parent_kode')) {
                 $builder->where('prov.parent_kode', '=', $request->parent_kode);
@@ -130,15 +135,17 @@ class SkorRisikoController extends Controller
         } else {
             // kabupaten → kecamatan → skor_risiko (1 level join)
             $builder = \DB::table('wilayah as parent')
-                ->join('wilayah as child', 'child.parent_kode', '=', 'parent.kode')
-                ->join('skor_risiko as sr', function ($join) use ($jenis, $tanggal, $isPrediksi) {
+                ->leftJoin('wilayah as child', function ($join) {
+                    $join->on('child.parent_kode', '=', 'parent.kode')
+                        ->where('child.tingkat', '=', 'kecamatan');
+                })
+                ->leftJoin('skor_risiko as sr', function ($join) use ($jenis, $tanggal, $isPrediksi) {
                     $join->on('sr.wilayah_kode', '=', 'child.kode')
                         ->where('sr.jenis_penyakit', '=', $jenis)
                         ->where('sr.is_prediksi', '=', $isPrediksi)
                         ->whereDate('sr.tanggal', '=', $tanggal);
                 })
-                ->where('parent.tingkat', '=', $tingkat)
-                ->where('child.tingkat', '=', 'kecamatan');
+                ->where('parent.tingkat', '=', $tingkat);
 
             if ($request->filled('parent_kode')) {
                 $builder->where('parent.parent_kode', '=', $request->parent_kode);
@@ -160,8 +167,14 @@ class SkorRisikoController extends Controller
 
         // Tentukan level_risiko berdasarkan skor rata-rata
         $data = $aggregated->map(function ($row) use ($jenis, $tanggal, $isPrediksi) {
-            $skor = (float) $row->skor;
-            $level = $skor >= 70 ? 'tinggi' : ($skor >= 40 ? 'sedang' : 'rendah');
+            // Jika tidak ada data skor (LEFT JOIN menghasilkan NULL), tetap tampilkan
+            // dengan skor 0 dan status "belum ada data"
+            $hasData = $row->skor !== null;
+            $skor = $hasData ? (float) $row->skor : 0;
+            $level = $hasData
+                ? ($skor >= 70 ? 'tinggi' : ($skor >= 40 ? 'sedang' : 'rendah'))
+                : 'belum_ada_data';
+            $confidence = $hasData ? 'lemah' : 'belum_ada_data';
 
             return [
                 'wilayah_kode' => $row->parent_kode,
@@ -170,12 +183,14 @@ class SkorRisikoController extends Controller
                 'is_prediksi' => $isPrediksi,
                 'skor' => $skor,
                 'level_risiko' => $level,
-                'confidence_level' => 'lemah',
+                'confidence_level' => $confidence,
                 'faktor_perhitungan' => [
                     'skor_agregat' => $skor,
-                    'jumlah_kecamatan' => $row->jumlah_kecamatan,
-                    'kecamatan_dengan_data' => $row->kecamatan_dengan_data,
-                    'catatan' => 'Skor rata-rata dari skor cuaca seluruh kecamatan',
+                    'jumlah_kecamatan' => $row->jumlah_kecamatan ?? 0,
+                    'kecamatan_dengan_data' => $row->kecamatan_dengan_data ?? 0,
+                    'catatan' => $hasData
+                        ? 'Skor rata-rata dari skor cuaca seluruh kecamatan'
+                        : 'Belum ada data skor risiko. Jalankan skor-risiko:refresh-cuaca untuk generate data.',
                 ],
                 'wilayah' => [
                     'kode' => $row->parent_kode,
