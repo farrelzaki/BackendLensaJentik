@@ -35,14 +35,17 @@ class RefreshSkorRisikoCuaca extends Command
             return self::SUCCESS;
         }
 
-        // ── Mode bulk: semua kecamatan aktif ───────────────────────────────
-        $kecamatan = Wilayah::where('tingkat', 'kecamatan')
-            ->whereNotNull('latitude')
-            ->whereNotNull('longitude')
-            ->get();
+        // ── Mode bulk: semua kecamatan aktif (koordinat akan diambil otomatis jika belum ada) ──
+        $query = Wilayah::where('tingkat', 'kecamatan');
+
+        if ($this->option('wilayah')) {
+            $query->where('kode', $this->option('wilayah'));
+        }
+
+        $kecamatan = $query->get();
 
         if ($kecamatan->isEmpty()) {
-            $this->warn('⚠ Tidak ada kecamatan dengan koordinat. Jalankan WilayahSeeder dulu.');
+            $this->warn('⚠ Tidak ada kecamatan ditemukan. Jalankan WilayahSeeder dulu.');
             return self::FAILURE;
         }
 
