@@ -14,6 +14,8 @@ use App\Http\Controllers\Api\NotifikasiController;
 use App\Http\Controllers\Api\ExportController;
 use App\Http\Controllers\Api\StatistikController;
 use App\Http\Controllers\Api\EdukasiController;
+use App\Http\Controllers\Api\GeocodeController;
+use App\Http\Controllers\Api\KaderDashboardController;
 
 Route::prefix('statistik')->group(function () {
     Route::get('/ringkasan', [StatistikController::class, 'ringkasan']);
@@ -110,3 +112,9 @@ Route::prefix('wilayah')->group(function () {
 Route::get('/user', function (Request $request) {
     return $request->user();
 })->middleware('auth:sanctum');
+
+Route::get('/geocode/reverse', [GeocodeController::class, 'reverse']);
+
+Route::middleware(['auth:sanctum', 'role:kader'])->prefix('kader')->group(function () {
+    Route::get('/dashboard', [KaderDashboardController::class, 'index']);
+});
