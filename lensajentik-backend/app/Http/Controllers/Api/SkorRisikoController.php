@@ -5,15 +5,13 @@ use App\Http\Controllers\Controller;
 use App\Models\Wilayah;
 use App\Models\SkorRisiko;
 use App\Services\RiskScoreService;
-use App\Services\WeatherService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class SkorRisikoController extends Controller
 {
     public function __construct(
-        protected RiskScoreService $riskScoreService,
-        protected WeatherService $weatherService
+        protected RiskScoreService $riskScoreService
     ) {}
 
     /**
@@ -30,16 +28,14 @@ class SkorRisikoController extends Controller
             return response()->json(['message' => 'Wilayah tidak ditemukan'], 404);
         }
 
-        // Pastikan data cuaca ada/fresh dulu sebelum hitung skor
-        $this->weatherService->fetchAndCache($wilayah);
-
+        // Hitung skor (fetch cuaca + kalkulasi + simpan)
         $hasil = $this->riskScoreService->hitungDanSimpan($wilayah, $jenis);
 
         return response()->json([
-            'wilayah' => $wilayah->only(['kode', 'nama', 'tingkat']),
+            'wilayah' => $wilayah->only(['kode', 'nama', 'tingkat', 'latitude', 'longitude']),
             'jenis_penyakit' => $jenis,
-            'skor_hari_ini' => collect($hasil)->firstWhere('is_prediksi', false),
-            'prediksi' => collect($hasil)->where('is_prediksi', true)->values(),
+            'skor_hari_ini' => $hasil['historis'][0] ?? null,
+            'prediksi' => $hasil['prediksi'],
         ]);
     }
 
@@ -203,6 +199,7 @@ class SkorRisikoController extends Controller
                     'nama' => $row->parent_nama,
                     'latitude' => $row->latitude,
                     'longitude' => $row->longitude,
+                    'tingkat' => $tingkat,
                 ],
             ];
         });

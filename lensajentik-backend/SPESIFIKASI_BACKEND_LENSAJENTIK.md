@@ -1,503 +1,432 @@
-# Spesifikasi Teknis Backend — LensaJentik
+# Spesifikasi Teknis Backend & System Architecture — LensaJentik
 **Technology Innovative Challenge 9.0 — 2026**
-Dokumen ini merupakan acuan detail untuk pengembangan backend (API, database, job scheduler) berdasarkan hasil analisis 10 mockup UI yang sudah dirancang tim UI/UX.
+*Sistem Peringatan Dini Risiko Demam Berdarah dan Malaria Berbasis Web-GIS Partisipatif*
 
 ---
 
-## 1. Ringkasan Arsitektur
+## 1. Ringkasan Arsitektur & Teknologi
+
+LensaJentik dibangun menggunakan arsitektur **Client-Server Single Page Application (SPA)** berorientasi pada pemisahan tanggung jawab (*Separation of Concerns*), performa tinggi, skalabilitas, dan integrasi data spasial-iklim secara *real-time*.
 
 ```
-┌─────────────────┐        HTTPS/JSON        ┌──────────────────────┐
-│   Frontend SPA   │ ───────────────────────► │   Backend REST API   │
-│   (Vue.js +      │ ◄─────────────────────── │   (Laravel + PHP)     │
-│   Vue Router)     │                          │                       │
-└─────────────────┘                          └──────────┬────────────┘
-                                                          │
-                                    ┌─────────────────────┼─────────────────────┐
-                                    ▼                     ▼                     ▼
-                          ┌──────────────┐      ┌──────────────────┐  ┌──────────────┐
-                          │  PostgreSQL   │      │  Task Scheduler   │  │  API Cuaca    │
-                          │  (Database)   │      │  (Cron Jobs)       │  │  Eksternal    │
-                          └──────────────┘      └──────────────────┘  └──────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│               PRESENTATION LAYER (Frontend - Vue.js 3 SPA)             │
+│   - Web-GIS Interaktif (Leaflet.js + Nominatim GeoJSON Boundary)       │
+│   - Visualisasi Tren & Prediksi (Chart.js / Real-time Bar Chart)       │
+│   - Pinia State Management (useMapStore, useKaderStore, dll.)         │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ HTTPS / RESTful API (JSON)
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│             APPLICATION LAYER (Backend - Laravel PHP 8.2+)             │
+│   - RESTful API Controllers & Request Validation                       │
+│   - Authentication (Laravel Sanctum Bearer Token & Role Middleware)    │
+│   - Risk Score Engine (SkorCuacaCalculator & RiskScoreService)         │
+│   - Console Commands & Job Scheduling (RefreshSkorRisikoCuaca)         │
+└───────┬───────────────────────────┬───────────────────────────┬────────┘
+        │                           │                           │
+        ▼                           ▼                           ▼
+┌──────────────┐          ┌──────────────────┐        ┌──────────────────┐
+│ BASIS DATA   │          │ JOB SCHEDULER    │        │ API EKSTERNAL    │
+│ Relasional   │          │ Queue Worker /   │        │ Open-Meteo API   │
+│ (PostgreSQL/ │          │ Cron Job Task    │        │ (Data Cuaca      │
+│ MySQL)       │          │ Scheduler        │        │ Real-time & 14D) │
+└──────────────┘          └──────────────────┘        └──────────────────┘
 ```
 
-**Prinsip desain kunci yang wajib dipegang tim backend:**
-
-1. **Dua kelas akses berbeda total secara arsitektur:**
-   - **Warga publik** → *stateless, tanpa login*. Identitas diwakili oleh **session token anonim** (UUID) yang di-generate di client (localStorage) dan dikirim di header tiap request (`X-Session-Id`). Backend TIDAK menyimpan data pribadi apa pun untuk warga.
-   - **Kader** → autentikasi penuh dengan Laravel Sanctum (bearer token).
-
-2. **Satu sumber kebenaran skor risiko.** Semua modul (Beranda, Peta Resiko, Statistik) membaca dari tabel `skor_risiko` yang sama — tidak boleh ada logika hitung skor terpisah di lebih dari satu tempat.
-
-3. **Job terjadwal adalah jantung sistem.** Skor risiko tidak dihitung real-time saat request datang, melainkan dihitung ulang secara berkala di background lalu di-cache ke tabel. Ini penting untuk performa dan supaya API cuaca eksternal tidak dipanggil berulang-ulang per request pengguna.
-
----
-
-## 2. Strategi Session Anonim (Wajib Diputuskan Sebelum Coding)
-
-Karena warga tidak login tapi tetap butuh fitur **poin, kuota subscribe, dan notifikasi personal**, seluruh sistem gamifikasi warga diikat ke `session_id` (UUID v4), bukan `user_id`.
-
-**Alur:**
-1. Saat pertama kali membuka web, frontend generate UUID → simpan di `localStorage` sebagai `lensajentik_session_id`.
-2. Setiap request dari warga (laporan, subscribe, notifikasi) menyertakan header `X-Session-Id: <uuid>`.
-3. Backend membuat baris di tabel `sesi_warga` saat UUID baru pertama kali muncul (lazy creation — tidak perlu endpoint register terpisah).
-4. Jika localStorage dihapus (ganti device/browser), riwayat poin & subscribe otomatis hilang — ini adalah **trade-off yang disengaja** sesuai prinsip privasi di proposal (tidak ada data pribadi tersimpan).
-
-> ⚠️ **Catatan untuk tim:** ini adalah keputusan arsitektur paling penting di seluruh sistem. Semua tabel yang menyentuh "warga" (bukan kader) menggunakan `session_id` sebagai foreign key, bukan `user_id`.
+### Prinsip Desain Kunci Backend:
+1. **Model Autentikasi Fleksibel & Akses Publik**:
+   - **Warga Publik (Akses Publik)**: Memantau Peta Risiko, mencari wilayah, membaca edukasi, mengisi kalkulator risiko kuis, serta melaporkan genangan jentik (dapat dilakukan secara anonim maupun terdaftar).
+   - **Pengguna Terdaftar (Kader & Admin)**: Menggunakan autentikasi berbasis **Laravel Sanctum (Bearer Token)** dengan *Role-Based Access Control* (`warga`, `kader`, `admin_puskesmas`, `admin_dinkes`).
+2. **Satu Sumber Kebenaran Skor Risiko (*Single Source of Truth*)**:
+   - Seluruh modul (Beranda, Peta Risiko, Statistik, Dashboard Kader) mengakses skor risiko yang bersumber dari tabel `skor_risiko` dan `prediksi_risiko`.
+3. **Engine Kalkulasi Skor Cuaca Bio-Klimatologi & Data Lapangan**:
+   - Skor risiko dihitung berdasarkan perpaduan indikator bioklimatologi nyamuk *Aedes aegypti* (suhu optimal 25–30°C, kelembapan >60%, dan akumulasi hujan 7 hari terakhir dari **Open-Meteo API**) serta penalti elevasi (>1.000 mdpl).
+   - Jika tersedia data pemeriksaan Angka Bebas Jentik (ABJ) langsung dari Kader Kesehatan dalam 14 hari terakhir, *confidence level* secara otomatis meningkat dari **`lemah` (Estimasi Cuaca)** menjadi **`kuat` (Data Lapangan)**.
+4. **Perhitungan Otomatis On-Demand & Terjadwal (Hybrid Execution)**:
+   - Perhitungan skor risiko dijalankan secara otomatis melalui antrean background job (`HitungSkorRisikoJob` / `skor-risiko:refresh-cuaca`), serta didukung *on-demand hydration* saat wilayah baru diakses.
 
 ---
 
-## 3. Skema Database (PostgreSQL)
+## 2. Skema Basis Data Relasional
 
-### 3.1 `wilayah`
-Menyimpan batas administratif (kecamatan/desa) dan datanya.
+Struktur basis data dirancang secara ternormalisasi (3NF) untuk menjamin integritas data dan efisiensi query.
 
-| Kolom | Tipe | Keterangan |
+### 2.1 Tabel `users`
+Menyimpan data pengguna terdaftar (Warga Terdaftar, Kader Kesehatan, Admin Puskesmas, Admin Dinkes).
+
+| Kolom | Tipe Data | Keterangan |
 |---|---|---|
-| id | UUID (PK) | |
-| nama | VARCHAR(150) | mis. "Kecamatan Patrang" |
-| kabupaten_kota | VARCHAR(150) | |
-| provinsi | VARCHAR(150) | |
-| geometri | GEOMETRY(POLYGON, 4326) | perlu ekstensi **PostGIS** |
-| created_at, updated_at | TIMESTAMP | |
+| `id` | BIGINT (PK, Auto Increment) | Unique User ID |
+| `nama` | VARCHAR(255) | Nama lengkap pengguna |
+| `email` | VARCHAR(255), UNIQUE | Email untuk login |
+| `password` | VARCHAR(255) | Password terenkripsi (bcrypt) |
+| `role` | ENUM('warga','kader','admin_puskesmas','admin_dinkes') | Hak akses (default: 'warga') |
+| `wilayah_kode` | VARCHAR(15), NULLABLE (FK → `wilayah.kode`) | Kode wilayah binaan/domisili |
+| `status_verifikasi` | BOOLEAN | Status verifikasi akun kader/admin (default: true) |
+| `created_at`, `updated_at` | TIMESTAMP | Timestamp standar Laravel |
 
-> 🔧 **Perlu:** aktifkan ekstensi `postgis` di PostgreSQL untuk query spasial (search kecamatan, filter berdasarkan lokasi).
+### 2.2 Tabel `wilayah`
+Menyimpan struktur administratif wilayah di Indonesia (Provinsi, Kabupaten/Kota, Kecamatan, Desa/Kelurahan).
 
-### 3.2 `data_cuaca`
-Log historis data cuaca per wilayah, ditarik berkala dari API eksternal.
-
-| Kolom | Tipe | Keterangan |
+| Kolom | Tipe Data | Keterangan |
 |---|---|---|
-| id | UUID (PK) | |
-| wilayah_id | UUID (FK → wilayah) | |
-| suhu | DECIMAL(4,1) | celcius |
-| kelembapan | DECIMAL(5,2) | persen |
-| curah_hujan | DECIMAL(6,2) | mm |
-| kondisi | VARCHAR(50) | mis. "Sering Gerimis" (untuk tampilan seperti di mockup Peta Resiko) |
-| sumber | VARCHAR(30) | "OpenWeatherMap" / "BMKG" |
-| diambil_pada | TIMESTAMP | |
+| `kode` | VARCHAR(15) (PK) | Kode standar wilayah (misal: '3174010') |
+| `nama` | VARCHAR(255) | Nama wilayah (misal: 'KEMBANGAN') |
+| `tingkat` | ENUM('provinsi','kabupaten','kecamatan','desa') | Tingkat hirarki wilayah |
+| `parent_kode` | VARCHAR(15), NULLABLE (FK → `wilayah.kode`) | Relasi hirarki ke wilayah atasnya |
+| `latitude` | NUMERIC(10,7), NULLABLE | Titik koordinat lintang |
+| `longitude` | NUMERIC(10,7), NULLABLE | Titik koordinat bujur |
+| `elevasi` | NUMERIC(8,2), NULLABLE | Ketinggian wilayah (meter di atas permukaan laut) |
+| `created_at`, `updated_at` | TIMESTAMP | Timestamp pencatatan |
 
-### 3.3 `data_abj`
-Input digital kader — pengganti kartu kertas.
+### 2.3 Tabel `data_cuaca`
+Log historis dan prakiraan data cuaca per wilayah dari Open-Meteo API.
 
-| Kolom | Tipe | Keterangan |
+| Kolom | Tipe Data | Keterangan |
 |---|---|---|
-| id | UUID (PK) | |
-| kader_id | UUID (FK → kader) | |
-| wilayah_id | UUID (FK → wilayah) | RT/RW binaan |
-| jumlah_rumah_diperiksa | INTEGER | |
-| jumlah_rumah_positif_jentik | INTEGER | |
-| abj_persen | DECIMAL(5,2) | dihitung otomatis: `(1 - positif/diperiksa) * 100` |
-| tanggal_pemeriksaan | DATE | |
-| catatan | TEXT (nullable) | |
-| created_at | TIMESTAMP | |
+| `id` | BIGINT (PK, Auto Increment) | |
+| `wilayah_kode` | VARCHAR(15) (FK → `wilayah.kode`) | |
+| `tanggal` | DATE | Tanggal pencatatan cuaca |
+| `suhu_avg` | NUMERIC(5,2), NULLABLE | Suhu rata-rata harian (°C) |
+| `kelembapan_avg` | NUMERIC(5,2), NULLABLE | Kelembapan nisbi rata-rata (%) |
+| `curah_hujan` | NUMERIC(6,2), NULLABLE | Curah hujan harian (mm) |
+| `is_forecast` | BOOLEAN | `false` untuk historis, `true` untuk prakiraan |
+| `sumber_api` | VARCHAR(50) | 'open-meteo' |
+| `created_at`, `updated_at` | TIMESTAMP | |
 
-### 3.4 `laporan_warga`
-Crowdsourcing genangan air.
+### 2.4 Tabel `skor_risiko`
+Tabel historis skor risiko DBD/Malaria hari ini per wilayah.
 
-| Kolom | Tipe | Keterangan |
+| Kolom | Tipe Data | Keterangan |
 |---|---|---|
-| id | UUID (PK) | |
-| session_id | UUID (FK → sesi_warga, nullable jika anonim) | |
-| nama_pelapor | VARCHAR(100), nullable | kosong jika "Lapor sebagai anonim" |
-| foto_url | VARCHAR(255) | path/URL file tersimpan |
-| latitude | DECIMAL(10,7) | |
-| longitude | DECIMAL(10,7) | |
-| alamat_text | VARCHAR(255) | hasil reverse-geocoding, sesuai kotak search di mockup Laporan |
-| wilayah_id | UUID (FK → wilayah) | di-resolve dari lat/long saat submit |
-| deskripsi | TEXT | |
-| status | ENUM('belum_ditangani','diproses','selesai') | default `belum_ditangani` |
-| is_anonim | BOOLEAN | |
-| jumlah_verifikasi | INTEGER | default 0, nambah tiap ada warga lain konfirmasi |
-| created_at | TIMESTAMP | |
+| `id` | BIGINT (PK, Auto Increment) | |
+| `wilayah_kode` | VARCHAR(15) (FK → `wilayah.kode`) | |
+| `jenis_penyakit` | ENUM('dbd','malaria') | Jenis penyakit tular vektor |
+| `tanggal` | DATE | Tanggal perhitungan skor |
+| `is_prediksi` | BOOLEAN | Default `false` untuk skor hari ini |
+| `skor` | NUMERIC(5,2) | Rentang 0–100 (makin tinggi makin berisiko) |
+| `level_risiko` | ENUM('rendah','sedang','tinggi','belum_ada_data') | Kategori level risiko |
+| `confidence_level` | ENUM('kuat','lemah') | 'kuat' (ada ABJ kader) / 'lemah' (murni cuaca) |
+| `faktor_perhitungan` | JSONB / JSON | Detail komponen skor (f_suhu, f_hujan, f_lembap, ABJ, dll.) |
+| `created_at`, `updated_at` | TIMESTAMP | |
 
-### 3.5 `verifikasi_laporan`
-Mencegah satu session verifikasi laporan yang sama berkali-kali.
+### 2.5 Tabel `prediksi_risiko`
+Tabel proyeksi tren skor risiko 14 hari ke depan per wilayah.
 
-| Kolom | Tipe | Keterangan |
+| Kolom | Tipe Data | Keterangan |
 |---|---|---|
-| id | UUID (PK) | |
-| laporan_id | UUID (FK → laporan_warga) | |
-| session_id | UUID (FK → sesi_warga) | |
-| created_at | TIMESTAMP | |
-| | | **UNIQUE(laporan_id, session_id)** |
+| `id` | BIGINT (PK, Auto Increment) | |
+| `wilayah_kode` | VARCHAR(15) (FK → `wilayah.kode`) | |
+| `jenis_penyakit` | ENUM('dbd','malaria') | |
+| `tanggal_prediksi` | DATE | Tanggal target prediksi (hari ke-1 s.d. ke-14) |
+| `tanggal_perhitungan` | DATE | Tanggal kapan prediksi dihitung |
+| `skor` | NUMERIC(5,2) | Skor prediksi (0–100) |
+| `level_risiko` | ENUM('rendah','sedang','tinggi','belum_ada_data') | Level risiko prediksi |
+| `confidence_level` | ENUM('kuat','lemah') | |
+| `faktor_perhitungan` | JSONB / JSON | rincian variabel cuaca prediksi |
+| `created_at`, `updated_at` | TIMESTAMP | |
 
-### 3.6 `skor_risiko`
-Tabel hasil kalkulasi — sumber kebenaran tunggal untuk semua modul.
+### 2.6 Tabel `abj_laporan`
+Data pemeriksaan jentik berkala oleh Kader Kesehatan (Digitalisasi ABJ).
 
-| Kolom | Tipe | Keterangan |
+| Kolom | Tipe Data | Keterangan |
 |---|---|---|
-| id | UUID (PK) | |
-| wilayah_id | UUID (FK → wilayah) | |
-| skor | DECIMAL(5,2) | 0–100, dipetakan ke warna (hijau <40, kuning 40–70, merah >70) |
-| level | ENUM('rendah','sedang','tinggi') | derived dari skor |
-| confidence_level | ENUM('kuat','lemah') | "kuat" jika ada data ABJ kader dalam 14 hari terakhir untuk wilayah tsb, else "lemah" (estimasi model umum) |
-| sumber_info_text | VARCHAR(255) | mis. "Ibu Kader kesehatan Jember sudah melakukan pemeriksaan langsung..." — auto-generate dari data_abj terkait |
-| dihitung_pada | TIMESTAMP | |
+| `id` | BIGINT (PK, Auto Increment) | |
+| `user_id` | BIGINT (FK → `users.id`) | ID Kader penginput |
+| `wilayah_kode` | VARCHAR(15) (FK → `wilayah.kode`) | Kode wilayah lokasi pemeriksaan |
+| `jumlah_rumah_diperiksa` | INTEGER | Total rumah/bangunan yang diperiksa |
+| `jumlah_rumah_positif` | INTEGER | Total rumah positif ditemukan jentik |
+| `abj_persen` | NUMERIC(5,2) | Rumus: `(1 - (positif / diperiksa)) * 100` |
+| `tanggal_pemeriksaan` | DATE | Tanggal pelaksanaan pemeriksaan lapangan |
+| `catatan` | TEXT, NULLABLE | Catatan temuan tempat perkembangbiakan |
+| `created_at`, `updated_at` | TIMESTAMP | |
 
-### 3.7 `prediksi_risiko`
-Proyeksi tren 7–14 hari (grafik "Minggu ke-2 / Minggu ke-3" di mockup Peta Resiko).
+### 2.7 Tabel `laporan_warga`
+Data *crowdsourcing* pelaporan titik genangan air dan sarang jentik liar oleh warga.
 
-| Kolom | Tipe | Keterangan |
+| Kolom | Tipe Data | Keterangan |
 |---|---|---|
-| id | UUID (PK) | |
-| wilayah_id | UUID (FK → wilayah) | |
-| minggu_ke | INTEGER | 1, 2, 3 |
-| skor_prediksi | DECIMAL(5,2) | |
-| rekomendasi_text | TEXT | "Tindakan Cepat Pelindung Keluarga" di mockup |
-| dihitung_pada | TIMESTAMP | |
+| `id` | BIGINT (PK, Auto Increment) | |
+| `user_id` | BIGINT, NULLABLE (FK → `users.id`) | ID User jika terdaftar, `NULL` jika anonim |
+| `session_id` | VARCHAR(100), NULLABLE | Identifier sesi anonim client |
+| `nama_pelapor` | VARCHAR(255), NULLABLE | Nama pelapor (opsional jika anonim) |
+| `foto_path` | VARCHAR(255) | Relative path / URL foto bukti genangan |
+| `latitude` | NUMERIC(10,7) | Koordinat lokasi genangan |
+| `longitude` | NUMERIC(10,7) | Koordinat lokasi genangan |
+| `alamat_text` | TEXT, NULLABLE | Deskripsi alamat / hasil reverse geocoding |
+| `wilayah_kode` | VARCHAR(15), NULLABLE (FK → `wilayah.kode`) | Kode wilayah terpetakan |
+| `deskripsi` | TEXT | Keterangan kondisi genangan air |
+| `status` | ENUM('belum_ditangani','diproses','selesai') | Status verifikasi & intervensi (default: 'belum_ditangani') |
+| `is_anonim` | BOOLEAN | Flag pelaporan anonim |
+| `created_at`, `updated_at` | TIMESTAMP | |
 
-### 3.8 `sesi_warga`
-Identitas anonim warga.
+### 2.8 Tabel `verifikasi_laporan`
+Verifikasi dan konfirmasi laporan warga oleh kader atau warga lain.
 
-| Kolom | Tipe | Keterangan |
+| Kolom | Tipe Data | Keterangan |
 |---|---|---|
-| session_id | UUID (PK) | dikirim dari client |
-| total_poin | INTEGER | default 0 |
-| kuota_subscribe | INTEGER | default 1 (sesuai proposal: "biasanya hanya bisa 1 wilayah") |
-| created_at | TIMESTAMP | |
+| `id` | BIGINT (PK, Auto Increment) | |
+| `laporan_warga_id` | BIGINT (FK → `laporan_warga.id`) | |
+| `user_id` | BIGINT (FK → `users.id`) | ID Pengguna yang melakukan verifikasi |
+| `status_verifikasi` | ENUM('valid','tidak_valid') | |
+| `catatan` | TEXT, NULLABLE | |
+| `created_at`, `updated_at` | TIMESTAMP | |
 
-### 3.9 `subscribe_wilayah`
-Wilayah yang diikuti warga (untuk notifikasi).
+### 2.9 Tabel `subscribe_wilayah`
+Daftar wilayah yang dipantau (di-subscribe) pengguna untuk menerima notifikasi.
 
-| Kolom | Tipe | Keterangan |
+| Kolom | Tipe Data | Keterangan |
 |---|---|---|
-| id | UUID (PK) | |
-| session_id | UUID (FK → sesi_warga) | |
-| wilayah_id | UUID (FK → wilayah) | |
-| created_at | TIMESTAMP | |
-| | | **UNIQUE(session_id, wilayah_id)** |
+| `id` | BIGINT (PK, Auto Increment) | |
+| `user_id` | BIGINT (FK → `users.id`) | Pengguna terdaftar |
+| `wilayah_kode` | VARCHAR(15) (FK → `wilayah.kode`) | Wilayah yang diikuti |
+| `created_at`, `updated_at` | TIMESTAMP | |
 
-### 3.10 `notifikasi`
-| Kolom | Tipe | Keterangan |
+### 2.10 Tabel `notifikasi`
+Notifikasi peringatan risiko, cuaca ekstrem, dan reminder bagi pengguna & kader.
+
+| Kolom | Tipe Data | Keterangan |
 |---|---|---|
-| id | UUID (PK) | |
-| session_id | UUID, nullable | untuk warga |
-| kader_id | UUID, nullable | untuk kader (reminder jadwal) |
-| judul | VARCHAR(150) | |
-| isi | TEXT | |
-| tipe | ENUM('kenaikan_risiko','cuaca_ekstrem','reminder_pemeriksaan') | |
-| sudah_dibaca | BOOLEAN | default false — sesuai badge titik hijau di mockup |
-| created_at | TIMESTAMP | |
+| `id` | BIGINT (PK, Auto Increment) | |
+| `user_id` | BIGINT (FK → `users.id`) | Target penerima notifikasi |
+| `judul` | VARCHAR(255) | Judul pesan |
+| `pesan` | TEXT | Isi ringkas notifikasi |
+| `tipe` | ENUM('kenaikan_risiko','cuaca_ekstrem','reminder_kader','laporan_baru') | Kategori notifikasi |
+| `is_dibaca` | BOOLEAN | Status baca (default: `false`) |
+| `metadata` | JSONB / JSON, NULLABLE | Data konteks tambahan (wilayah_kode, laporan_id, dll.) |
+| `created_at`, `updated_at` | TIMESTAMP | |
 
-### 3.11 `kader`
-| Kolom | Tipe | Keterangan |
+### 2.11 Tabel `konten_edukasi`
+Artikel edukasi pencegahan DBD/Malaria dan panduan 3M Plus.
+
+| Kolom | Tipe Data | Keterangan |
 |---|---|---|
-| id | UUID (PK) | |
-| nama | VARCHAR(100) | |
-| email | VARCHAR(150), UNIQUE | |
-| password_hash | VARCHAR(255) | bcrypt |
-| wilayah_binaan_id | UUID (FK → wilayah) | |
-| status_verifikasi | BOOLEAN | default false, diaktifkan admin/Dinkes |
-| created_at | TIMESTAMP | |
-
-### 3.12 `artikel`
-| Kolom | Tipe | Keterangan |
-|---|---|---|
-| id | UUID (PK) | |
-| judul | VARCHAR(200) | |
-| gambar_url | VARCHAR(255) | |
-| konten | TEXT | |
-| kategori | VARCHAR(50) | "DBD" / "Malaria" |
-| tanggal_publish | DATE | |
-| created_at | TIMESTAMP | |
-
-### 3.13 `statistik_nasional`
-Untuk kartu-kartu angka di Beranda (1.430 kematian, 7,3%, dsb.) — diisi manual/periodik dari data Kemenkes, bukan real-time.
-
-| Kolom | Tipe | Keterangan |
-|---|---|---|
-| id | UUID (PK) | |
-| label | VARCHAR(100) | "Rekor Tertinggi Sepanjang Sejarah" |
-| nilai | VARCHAR(50) | "1.430" |
-| deskripsi | TEXT | |
-| tahun_data | INTEGER | |
+| `id` | BIGINT (PK, Auto Increment) | |
+| `judul` | VARCHAR(255) | Judul artikel |
+| `slug` | VARCHAR(255), UNIQUE | URL-friendly slug |
+| `kategori` | ENUM('dbd','malaria','umum') | Kategori materi |
+| `ringkasan` | TEXT | Ringkasan singkat artikel |
+| `konten` | TEXT | Isi lengkap artikel (format HTML / Markdown) |
+| `gambar_url` | VARCHAR(255), NULLABLE | URL ilustrasi artikel |
+| `created_at`, `updated_at` | TIMESTAMP | |
 
 ---
 
-## 4. Daftar Lengkap API Endpoint per Halaman
+## 3. Daftar Endpoint API (RESTful Specs)
 
-### 4.1 Landing Page (Beranda) — Publik, tanpa auth
+### 3.1 Otentikasi & Profil Pengguna (`/api/auth`)
 
-| Method | Endpoint | Fungsi | Response |
+| Method | Endpoint | Proteksi / Role | Deskripsi & Respons |
 |---|---|---|---|
-| GET | `/api/statistik/ringkasan-nasional` | Ambil kartu statistik ("Rekor Tertinggi", "Indonesia Sumbang 7,3%", dst.) | `[{label, nilai, deskripsi}]` |
-| GET | `/api/artikel?limit=3&sort=terbaru` | 3 artikel untuk carousel (dipakai juga di Edukasi) | `[{id, judul, gambar_url, ringkasan}]` |
-
-### 4.2 Peta Resiko — Publik, tanpa auth
-
-| Method | Endpoint | Fungsi |
-|---|---|---|
-| GET | `/api/wilayah?search=&level_risiko=` | Search kecamatan (autocomplete) + filter dropdown "Semua level resiko". Return GeoJSON polygon + skor tiap wilayah untuk render heatmap |
-| GET | `/api/wilayah/{id}` | Detail 1 wilayah: nama, skor, level, confidence, suhu, kondisi cuaca, sumber_info_text (blok "Keadaan Wilayah" + "60%" + "Sumber Informasi" di mockup) |
-| GET | `/api/wilayah/{id}/prediksi` | Data proyeksi minggu ke-2/ke-3 untuk grafik + rekomendasi tindakan |
-| POST | `/api/subscribe` | Body: `{wilayah_id}`, Header: `X-Session-Id`. Tombol "Ikuti Kabar Wilayah ini". Cek kuota dulu sebelum insert — kalau kuota habis, return 403 dengan pesan yang bisa dipakai frontend untuk arahkan ke laporan (dapat kuota tambahan) |
-
-**Detail request/response contoh:**
-```
-GET /api/wilayah/{id}
-Response 200:
-{
-  "id": "uuid",
-  "nama": "Kecamatan Patrang",
-  "skor": 60,
-  "level": "sedang",
-  "confidence_level": "kuat",
-  "cuaca": { "suhu": 28.5, "kondisi": "Sering Gerimis" },
-  "sumber_info_text": "Ibu Kader kesehatan Jember sudah melakukan pemeriksaan langsung ke rumah-rumah warga setempat minggu ini.",
-  "keadaan_text": "Kondisi lingkungan di sekitar kita saat ini cukup mendukung bagi nyamuk untuk berkembang biak...",
-  "prediksi": [
-    { "minggu_ke": 2, "skor": 65 },
-    { "minggu_ke": 3, "skor": 58 }
-  ],
-  "rekomendasi": "Harap Siaga! Populasi nyamuk pembawa virus DBD diramal akan meningkat tajam..."
-}
-```
-
-### 4.3 Laporan Page — Publik, tanpa auth (session anonim)
-
-| Method | Endpoint | Fungsi |
-|---|---|---|
-| GET | `/api/geocode/reverse?lat=&lng=` | Isi otomatis kotak alamat saat tombol "Deteksi Lokasi Saya" ditekan (proxy ke Nominatim/OSM) |
-| POST | `/api/laporan` | Submit laporan. **multipart/form-data**: `foto`, `latitude`, `longitude`, `deskripsi`, `nama_pelapor` (opsional), `is_anonim` (bool). Header: `X-Session-Id` |
-| POST | `/api/laporan/{id}/verifikasi` | Warga lain konfirmasi laporan valid. Header: `X-Session-Id` (cek belum pernah verifikasi laporan yg sama) |
-| GET | `/api/laporan/{id}/status` | Cek status tindak lanjut laporan (belum_ditangani/diproses/selesai) |
-
-**Validasi wajib di `POST /api/laporan`:**
-- MIME type: hanya `image/jpeg`, `image/png`, `image/webp`
-- Ukuran maksimum: 10MB (sesuai teks di mockup: "dengan ukuran file dibawah 10MB")
-- Rate limiting: maksimum misalnya 5 laporan / 10 menit per `X-Session-Id` DAN per IP (kombinasi keduanya, karena session bisa direset)
-- Response harus mengembalikan poin & kuota terbaru untuk ditampilkan di halaman sukses:
-
-```
-Response 201:
-{
-  "laporan_id": "uuid",
-  "status": "belum_ditangani",
-  "poin_didapat": 10,
-  "total_poin": 10,
-  "kuota_subscribe_baru": 2,
-  "pesan": "Berkat laporan ini, kamu dapat bonus untuk memantau 1 wilayah tambahan"
-}
-```
-
-> Sesuai mockup halaman sukses, ada **2 reward berbeda**: (1) share ke sosmed — murni client-side, tidak perlu backend; (2) bonus kuota subscribe — logic ini yang harus jalan di endpoint `POST /api/laporan`. Rekomendasi: nambah kuota terjadi **langsung saat submit** (bukan menunggu verifikasi admin), supaya UX di halaman sukses sesuai mockup. Kalau nanti laporan terbukti spam/palsu, kuota bisa ditarik kembali via job moderasi.
-
-### 4.4 Edukasi Page (utama)
-
-| Method | Endpoint | Fungsi |
-|---|---|---|
-| GET | `/api/artikel?limit=3` | Carousel "Artikel Terkait DBD" |
-| GET | `/api/statistik/fakta-dbd` | Kartu "244.409 — Jumlah kasus DBD di Indonesia sepanjang 2024" + data grafik kecil |
-
-*Panduan 3M Plus = konten statis di frontend, tidak perlu endpoint.*
-
-### 4.5 Edukasi — Artikel Detail
-
-| Method | Endpoint | Fungsi |
-|---|---|---|
-| GET | `/api/artikel/{id}` | Isi lengkap 1 artikel |
-| GET | `/api/artikel/{id}/terkait?limit=1` | Artikel di bagian bawah/related (opsional, kalau ada di desain final) |
-
-**Pengisian konten artikel:** karena tidak ada waktu bikin CMS admin penuh, gunakan salah satu dari 2 opsi:
-- **Opsi cepat (direkomendasikan untuk H-1):** isi tabel `artikel` langsung lewat **database seeder** Laravel, tidak perlu endpoint admin sama sekali.
-- **Opsi lengkap (kalau waktu memungkinkan):** buat 1 endpoint sederhana `POST /api/admin/artikel` dengan proteksi API key statis (bukan sistem admin penuh).
-
-### 4.6 Edukasi — Kalkulator Risiko (Kuis)
-
-**Rekomendasi: 100% frontend, tanpa backend.** Pertanyaan dan bobot skor di-hardcode di kode Vue. Ini mempercepat development signifikan karena tim backend tidak perlu kejar 2 fitur besar sekaligus.
-
-*Jika tim tetap ingin backend (opsional, prioritas rendah):*
-| Method | Endpoint | Fungsi |
-|---|---|---|
-| GET | `/api/kuis/pertanyaan` | List pertanyaan + pilihan |
-| POST | `/api/kuis/submit` | Body: array jawaban → return skor + rekomendasi |
-
-### 4.7 Notification Page — Session anonim / Kader
-
-| Method | Endpoint | Fungsi |
-|---|---|---|
-| GET | `/api/notifikasi?status=semua\|belum_dibaca` | List notifikasi. Header: `X-Session-Id` (warga) ATAU `Authorization: Bearer` (kader) |
-| PUT | `/api/notifikasi/{id}/baca` | Tandai satu notifikasi sudah dibaca |
-| PUT | `/api/notifikasi/baca-semua` | Tandai semua sudah dibaca (opsional, untuk UX) |
-
-**Response contoh (sesuai tab "Semua (5)" / "Belum dibaca (1)" di mockup):**
-```
-GET /api/notifikasi?status=semua
-Response 200:
-{
-  "total": 5,
-  "belum_dibaca": 1,
-  "data": [
-    { "id": "uuid", "judul": "...", "isi": "...", "sudah_dibaca": false, "created_at": "2026-07-23" },
-    ...
-  ]
-}
-```
-
-### 4.8 Statistik Page
-
-> ⚠️ Mockup halaman ini masih kosong (belum ada konten final dari tim UI/UX). Endpoint di bawah disiapkan berdasarkan deskripsi fitur di proposal, perlu disesuaikan begitu desain final selesai.
-
-| Method | Endpoint | Fungsi |
-|---|---|---|
-| GET | `/api/statistik/tren?wilayah_id=&range=30d` | Grafik tren kasus/ABJ untuk 1 wilayah |
-| GET | `/api/statistik/perbandingan?wilayah_ids[]=&wilayah_ids[]=` | Bandingkan beberapa wilayah sekaligus |
-| GET | `/api/statistik/export?format=pdf\|xlsx&wilayah_id=` | Export data (fitur ini disebut untuk kader di proposal, tapi bisa juga publik sesuai "Dashboard Statistik Publik") |
-
-### 4.9 Kader — Login
-
-| Method | Endpoint | Fungsi |
-|---|---|---|
-| POST | `/api/kader/login` | Body: `{email, password}` → return Sanctum bearer token |
-| POST | `/api/kader/lupa-password` | Body: `{email}` → kirim link reset via email |
-| POST | `/api/kader/reset-password` | Body: `{token, password_baru}` |
-| POST | `/api/kader/logout` | Revoke token aktif |
-
-> 🔧 **Perlu setup:** mail service untuk fitur "Lupa password?" — gunakan Mailtrap (gratis, cukup untuk demo/testing) atau SMTP Gmail untuk keperluan submission.
-
-### 4.10 Kader — Dashboard, ABJ, Riwayat, Laporan, Notifikasi
-
-*Semua endpoint di bawah wajib melewati middleware `auth:sanctum`.*
-
-| Method | Endpoint | Fungsi |
-|---|---|---|
-| GET | `/api/kader/dashboard` | Overview wilayah binaan: skor terkini, ringkasan ABJ, daftar tugas pending |
-| POST | `/api/kader/abj` | Submit input pemeriksaan jentik baru. Body: `{wilayah_id, jumlah_rumah_diperiksa, jumlah_rumah_positif_jentik, tanggal_pemeriksaan, catatan}` |
-| GET | `/api/kader/abj/riwayat?range=` | Data grafik tren ABJ (Chart.js) |
-| GET | `/api/kader/abj/perbandingan` | Bandingkan ABJ antar-RT/RW binaan (jika kader pegang lebih dari satu wilayah) |
-| GET | `/api/kader/laporan/export?format=pdf\|xlsx&range=` | Generate & download rekap resmi |
-| GET | `/api/kader/notifikasi` | Reminder jadwal pemeriksaan |
-| PUT | `/api/kader/notifikasi/{id}/konfirmasi` | Tandai tugas pemeriksaan selesai |
+| `POST` | `/api/auth/register` | Publik (Throttle: 5/min) | Registrasi akun pengguna (`warga` / `kader`). Return user & Bearer Token. |
+| `POST` | `/api/auth/login` | Publik (Throttle: 10/min) | Login pengguna. Return user profile & Bearer Token. |
+| `POST` | `/api/auth/forgot-password` | Publik (Throttle: 5/min) | Kirim token reset password via email. |
+| `POST` | `/api/auth/reset-password` | Publik (Throttle: 5/min) | Reset password menggunakan token valid. |
+| `POST` | `/api/auth/logout` | `auth:sanctum` | Revoke token aktif pengguna. |
+| `GET` | `/api/auth/me` | `auth:sanctum` | Mengembalikan data profil pengguna aktif beserta wilayah domisili/binaan. |
+| `PATCH` | `/api/auth/update-profile` | `auth:sanctum` | Update nama, email, password, atau wilayah domisili. |
 
 ---
 
-## 5. Job Terjadwal (Laravel Task Scheduler / Cron)
+### 3.2 Peta & Skor Risiko (`/api/skor-risiko`)
 
-Ini bagian yang paling mudah terlewat tapi krusial — **skor risiko dan cuaca TIDAK dihitung on-demand**, melainkan job background.
-
-| Job | Jadwal | Fungsi |
-|---|---|---|
-| `TarikDataCuacaJob` | Tiap 1–3 jam | Panggil API cuaca eksternal untuk semua `wilayah`, insert ke `data_cuaca` |
-| `HitungSkorRisikoJob` | Tiap 3–6 jam (setelah job cuaca) | Ambil data cuaca terbaru + ABJ terbaru (14 hari) + kepadatan laporan warga (7 hari) per wilayah → hitung skor → insert/update `skor_risiko` |
-| `HitungPrediksiRisikoJob` | Harian | Gunakan data forecast cuaca → hitung proyeksi skor minggu ke-2 & ke-3 → insert `prediksi_risiko` |
-| `GenerateNotifikasiRisikoJob` | Setelah `HitungSkorRisikoJob` | Bandingkan skor baru vs skor sebelumnya per wilayah; kalau naik signifikan (misal >15 poin atau naik level), insert notifikasi untuk semua `session_id` yang subscribe wilayah tsb |
-| `GenerateNotifikasiCuacaEkstremJob` | Setelah job cuaca | Kalau curah_hujan/suhu melewati ambang batas tertentu, kirim notifikasi cuaca ekstrem |
-| `ReminderPemeriksaanKaderJob` | Mingguan | Insert notifikasi reminder ke semua kader yang belum submit ABJ minggu ini |
-
-**Formula skor risiko (contoh, bisa disesuaikan tim setelah riset lebih lanjut):**
-```
-skor = (bobot_cuaca × skor_cuaca_normalized)
-     + (bobot_abj × (100 - abj_persen_rata2))
-     + (bobot_laporan × min(jumlah_laporan_7hari × 5, 100))
-
-# contoh bobot awal: bobot_cuaca=0.4, bobot_abj=0.4, bobot_laporan=0.2
-```
-
-**Confidence level:** `kuat` jika ada minimal 1 baris `data_abj` untuk wilayah tsb dalam 14 hari terakhir, selain itu `lemah` (murni estimasi cuaca).
+| Method | Endpoint | Proteksi | Deskripsi & Parameter |
+|---|---|---|---|
+| `GET` | `/api/skor-risiko/peta` | Publik | Query agregasi skor risiko per wilayah untuk heatmap peta.<br/>**Query Params:**<br/>- `tingkat`: `provinsi` \| `kabupaten` \| `kecamatan` \| `desa` (default: `kabupaten`)<br/>- `jenis`: `dbd` \| `malaria` (default: `dbd`)<br/>- `parent_kode`: filter wilayah anak (opsional)<br/>- `level_risiko`: filter `tinggi` \| `sedang` \| `rendah` (opsional) |
+| `GET` | `/api/skor-risiko/{kode}` | Publik | Detail skor risiko 1 wilayah.<br/>Memicu *on-demand hydration* data cuaca Open-Meteo & kalkulasi skor.<br/>**Response:** `wilayah`, `skor_hari_ini`, `prediksi` ( array 14 hari forecast), indikator cuaca, dan rekomendasi cepat. |
+| `GET` | `/api/cuaca/{kode}` | Publik | Mengembalikan log historis & prakiraan data cuaca 30 hari untuk 1 wilayah dari `data_cuaca`. |
 
 ---
 
-## 6. Alur End-to-End (Sequence per Fitur Utama)
+### 3.3 Pencarian & Master Wilayah (`/api/wilayah`)
 
-### 6.1 Alur: Warga melihat Peta Resiko
-```
-1. Frontend load → cek localStorage → ambil/generate session_id
-2. Frontend GET /api/wilayah (tanpa filter) → render heatmap semua wilayah
-3. User ketik "Patrang" di search box → GET /api/wilayah?search=Patrang
-4. User klik polygon wilayah di peta → GET /api/wilayah/{id}
-5. Render panel "Hasil Pemeriksaan" + grafik prediksi dari response
-6. User klik "Ikuti Kabar Wilayah ini" → POST /api/subscribe {wilayah_id}
-   header X-Session-Id
-   → jika kuota habis: tampilkan pesan "kuota habis, laporkan genangan
-     untuk dapat kuota tambahan" (arahkan ke halaman Laporan)
-```
+| Method | Endpoint | Proteksi | Deskripsi |
+|---|---|---|---|
+| `GET` | `/api/wilayah` | Publik | Mengambil daftar wilayah berdasarkan `tingkat` dan `parent_kode`. |
+| `GET` | `/api/wilayah/search` | Publik | Auto-complete pencarian wilayah berdasarkan nama.<br/>**Query Param:** `q` (minimal 3 karakter). Return list nama & kode wilayah. |
+| `GET` | `/api/wilayah/{kode}` | Publik | Mengambil detail 1 wilayah beserta hirarki induk (*breadcrumb*). |
+| `GET` | `/api/wilayah/{kode}/desa` | Publik | Mengambil daftar desa/kelurahan di bawah 1 kecamatan. |
+| `GET` | `/api/geocode/reverse` | Publik | Proxy reverse-geocoding dari koordinat `lat` & `lng` ke string alamat ringkas. |
 
-### 6.2 Alur: Warga mengirim Laporan
-```
-1. User buka halaman Laporan → browser minta izin geolocation
-2. User klik "Deteksi Lokasi Saya" → browser Geolocation API
-   → GET /api/geocode/reverse?lat=&lng= → isi kotak alamat otomatis
-3. User pilih toggle "Lapor dengan identitas" / "Lapor sebagai anonim"
-4. User upload foto (validasi client-side dulu: tipe & ukuran, untuk UX cepat)
-5. User isi deskripsi → klik "Kirim Laporan"
-6. Frontend POST /api/laporan (multipart) header X-Session-Id
-7. Backend:
-   a. Validasi ulang file (jangan percaya validasi client saja)
-   b. Simpan foto ke storage (local/S3-compatible)
-   c. Resolve wilayah_id dari lat/long (point-in-polygon query PostGIS)
-   d. Insert row laporan_warga
-   e. Update sesi_warga: total_poin += 10, kuota_subscribe += 1 (contoh)
-   f. Return response dengan poin & kuota terbaru
-8. Frontend redirect ke halaman "Laporan Anda Terkirim"
-   → tampilkan poin & opsi "Pilih Wilayah" (bonus kuota)
-9. (Async, tidak blocking) job background nanti akan ikut hitung
-   laporan ini sebagai bagian dari skor_risiko wilayah tsb
-```
+---
 
-### 6.3 Alur: Kader Input ABJ
-```
-1. Kader login → POST /api/kader/login → simpan bearer token
-2. GET /api/kader/dashboard (header Authorization: Bearer) → tampilkan overview
-3. Kader buka /kader/abj → isi form (jumlah diperiksa, jumlah positif)
-4. Frontend hitung preview ABJ% secara live di client (UX), lalu
-   POST /api/kader/abj → backend hitung ulang & simpan (source of truth)
-5. Job HitungSkorRisikoJob nanti akan otomatis pakai data ABJ terbaru
-   ini di kalkulasi skor berikutnya
-```
+### 3.4 Crowdsourcing Laporan Warga (`/api/laporan-warga`)
 
-### 6.4 Alur: Notifikasi otomatis sampai ke warga
+| Method | Endpoint | Proteksi | Deskripsi |
+|---|---|---|---|
+| `POST` | `/api/laporan-warga` | Publik (Bisa Anonim) | Submit laporan genangan/jentik baru.<br/>**Payload (multipart/form-data):** `foto`, `latitude`, `longitude`, `deskripsi`, `nama_pelapor` (opsional), `is_anonim` (boolean).<br/>**Validasi:** File image (JPEG/PNG/WEBP, Max 10MB). Auto-resolve `wilayah_kode` dari koordinat. |
+| `GET` | `/api/laporan-warga` | Publik | Mengambil daftar laporan warga. Supporting filter: `wilayah_kode`, `status`, `page`. |
+| `GET` | `/api/laporan-warga/{id}` | Publik | Detail 1 laporan warga beserta status penanganan & jumlah verifikasi. |
+| `POST` | `/api/laporan-warga/{id}/verifikasi` | `auth:sanctum` | Verifikasi validitas laporan oleh pengguna lain/kader. |
+| `PATCH` | `/api/laporan-warga/{id}/status` | `auth:sanctum` (`kader`, `admin`) | Mengubah status laporan (`belum_ditangani` → `diproses` → `selesai`). |
+
+---
+
+### 3.5 Digitalisasi Pemeriksaan ABJ Kader (`/api/abj`)
+
+| Method | Endpoint | Proteksi | Deskripsi |
+|---|---|---|---|
+| `POST` | `/api/abj` | `auth:sanctum` | Input data pemeriksaan jentik oleh Kader.<br/>**Payload:** `wilayah_kode`, `jumlah_rumah_diperiksa`, `jumlah_rumah_positif_jentik`, `tanggal_pemeriksaan`, `catatan`.<br/>System auto-calculates `abj_persen = (1 - positif / diperiksa) * 100` dan memperbarui *confidence level* wilayah menjadi `kuat`. |
+| `GET` | `/api/abj` | `auth:sanctum` | Mengambil daftar data ABJ dengan filter wilayah & tanggal. |
+| `GET` | `/api/abj/saya` | `auth:sanctum` | Mengambil riwayat pemeriksaan jentik khusus kader yang sedang login. |
+| `GET` | `/api/kader/dashboard` | `auth:sanctum` (`kader`) | Overview dashboard kader: ringkasan ABJ wilayah binaan, skor risiko terkini, dan statistik laporan warga sekitar. |
+
+---
+
+### 3.6 Langganan Wilayah & Notifikasi (`/api/subscribe-wilayah` & `/api/notifikasi`)
+
+| Method | Endpoint | Proteksi | Deskripsi |
+|---|---|---|---|
+| `GET` | `/api/subscribe-wilayah` | `auth:sanctum` | Mengambil daftar wilayah yang di-subscribe pengguna terdaftar. |
+| `POST` | `/api/subscribe-wilayah` | `auth:sanctum` | Menambah wilayah pantauan (`wilayah_kode`). |
+| `DELETE` | `/api/subscribe-wilayah/{kode}` | `auth:sanctum` | Menghapus wilayah dari daftar pantauan. |
+| `GET` | `/api/notifikasi` | `auth:sanctum` | Mengambil daftar notifikasi pengguna.<br/>Query: `status=semua` \| `belum_dibaca`. |
+| `PATCH` | `/api/notifikasi/baca-semua` | `auth:sanctum` | Menandai seluruh notifikasi pengguna sebagai sudah dibaca. |
+| `PATCH` | `/api/notifikasi/{id}/baca` | `auth:sanctum` | Menandai 1 notifikasi sebagai sudah dibaca. |
+
+---
+
+### 3.7 Statistik & Edukasi (`/api/statistik` & `/api/edukasi`)
+
+| Method | Endpoint | Proteksi | Deskripsi |
+|---|---|---|---|
+| `GET` | `/api/statistik/ringkasan` | Publik | Mengembalikan statistik nasional kasus & rekapitulasi data. |
+| `GET` | `/api/statistik/bandingkan` | Publik | Membandingkan tren skor & ABJ antara dua atau lebih wilayah. |
+| `GET` | `/api/edukasi` | Publik | Mengambil daftar artikel edukasi pencegahan DBD/Malaria. |
+| `GET` | `/api/edukasi/{slug}` | Publik | Mengambil isi lengkap 1 artikel edukasi berdasarkan slug. |
+| `GET` | `/api/edukasi/kuis/pertanyaan` | Publik | Mengambil daftar pertanyaan kuis Kalkulator Risiko Personal. |
+| `POST` | `/api/edukasi/kuis/hitung` | Publik | Menghitung kalkulasi skor risiko mandiri pengguna berdasarkan jawaban kuis. |
+
+---
+
+### 3.8 Ekspor Laporan Resmi (`/api/export`)
+
+| Method | Endpoint | Proteksi | Deskripsi |
+|---|---|---|---|
+| `GET` | `/api/export/abj/excel` | `auth:sanctum` (`kader`,`admin`) | Ekspor rekapitulasi data ABJ ke format spreadsheet `.xlsx`. |
+| `GET` | `/api/export/abj/pdf` | `auth:sanctum` (`kader`,`admin`) | Ekspor rekapitulasi laporan resmi ABJ ke format dokumen `.pdf`. |
+
+---
+
+## 4. Job Terjadwal & Perhitungan Background (Console Commands)
+
+Sistem menggunakan **Console Commands & Job Queues** Laravel untuk memproses data cuaca dan kalkulasi risiko tanpa menghambat kecepatan respon API.
+
+### 4.1 Console Command `skor-risiko:refresh-cuaca`
+- **File**: `app/Console/Commands/RefreshSkorRisikoCuaca.php`
+- **Fungsi**: Menarik data cuaca 30 hari dari Open-Meteo API, menghitung indikator bioklimatologi, serta memperbarui tabel `skor_risiko` dan `prediksi_risiko`.
+- **Opsi Command**:
+  - `--wilayah=KODE`: Memproses 1 wilayah spesifik.
+  - `--jenis=dbd|malaria`: Menentukan jenis penyakit (default: `dbd`).
+  - `--sync`: Memproses kalkulasi secara langsung dalam mode *synchronous* tanpa masuk ke antrean queue worker.
+  - `--limit=N`: Membatasi jumlah wilayah yang diproses saat pengujian/testing.
+
+### 4.2 Queue Job `HitungSkorRisikoJob`
+- **File**: `app/Jobs/HitungSkorRisikoJob.php`
+- **Fungsi**: Unit pekerjaan asynchronous untuk 1 wilayah yang meng-geocode koordinat jika belum ada, memanggil `WeatherService::fetchFullRange()`, mengevaluasi `SkorCuacaCalculator`, dan memperbarui record di database.
+
+---
+
+## 5. Penyesuaian Alur Aplikasi Berdasarkan Tampilan Frontend Saat Ini
+
+### 5.1 Alur 1: Pemantauan Peta Risiko Nyamuk (Modul `RiskMapView.vue`)
 ```
-1. Job TarikDataCuacaJob jalan tiap beberapa jam
-2. Job HitungSkorRisikoJob jalan setelahnya, deteksi kenaikan skor
-   di wilayah "Patrang" dari 45 → 68 (level: sedang → tinggi)
-3. Job GenerateNotifikasiRisikoJob query semua session_id yang
-   subscribe wilayah Patrang → insert notifikasi utk masing2
-4. Warga buka web lagi → frontend cek localStorage session_id
-5. GET /api/notifikasi?status=belum_dibaca header X-Session-Id
-6. Badge notifikasi (ikon lonceng) tampilkan angka unread
+[User Buka /peta-resiko]
+        │
+        ▼
+[Frontend Render Leaflet Map Skala Nasional (Zoom Level 5)]
+        │
+        ├─► Request GET /api/skor-risiko/peta?tingkat=kabupaten&jenis=dbd
+        │   Backend mengembalikan agregasi skor & level_risiko seluruh Kabupaten
+        │
+[User Gunakan Pencarian Wilayah / Klik Wilayah di Peta]
+        │
+        ├─► Request GET /api/wilayah/search?q=Kembangan
+        │   User memilih "Kecamatan KEMBANGAN" (Kode: 3174010)
+        │
+        ├─► Request GET /api/skor-risiko/3174010?jenis=dbd
+        │   Backend memicu WeatherService -> Open-Meteo API (jika belum fresh)
+        │   Mengembalikan skor_hari_ini, kelembapan, suhu, curah hujan, & array 14 hari prediksi
+        │
+        ├─► Frontend Panggil Nominatim OpenStreetMap API Client-Side
+        │   Fetch GeoJSON Polygon boundary & koordinat presisi -> Leaflet flyTo(zoom 14)
+        │
+        ▼
+[Frontend Render Panel "Hasil Pemeriksaan"]
+        ├─ Teks Keadaan Wilayah dinamis
+        ├─ Kondisi Udara (Data Open-Meteo: Suhu °C, Curah Hujan mm, Kelembapan %)
+        ├─ Badge Confidence Level ("✓ Data Lapangan" jika ada ABJ Kader, "📡 Estimasi Cuaca" jika murni cuaca)
+        ├─ Circular Gauge Skor Risiko (0–100) dengan kode warna (Merah/Kuning/Hijau/Abu-abu)
+        ├─ Bar Chart Prediksi Skor Risiko 14 Hari Ke Depan
+        ├─ Kartu Rekomendasi "Tindakan Cepat Pelindung Keluarga"
+        └─ Tombol "Ikuti Kabar Wilayah ini" -> POST /api/subscribe-wilayah
 ```
 
 ---
 
-## 7. Tech Stack & Setup Checklist untuk Anggota 2
-
-| Komponen | Pilihan | Catatan |
-|---|---|---|
-| Backend framework | Laravel (PHP) | sesuai proposal |
-| Auth kader | Laravel Sanctum | token-based |
-| Database | PostgreSQL | + ekstensi **PostGIS** (untuk polygon wilayah & query spasial) |
-| API Cuaca | OpenWeatherMap (tier gratis) atau BMKG | daftar API key di awal, cek rate limit tier gratis |
-| Geocoding | Nominatim (OpenStreetMap, gratis) | untuk reverse geocode di form Laporan |
-| Storage foto | Local disk (dev) → pindah ke S3-compatible (mis. Cloudflare R2/DO Spaces) kalau sempat | pastikan validasi MIME & ukuran di server, bukan cuma client |
-| Mail (lupa password) | Mailtrap (testing) | cukup untuk demo, tidak perlu domain email sendiri |
-| Job scheduler | Laravel Task Scheduler + cron OS | pastikan cron server aktif di hosting produksi |
-| Deployment backend | VPS/PaaS yang support PHP + PostgreSQL + cron | Railway/Render tier gratis bisa jadi opsi cepat |
-
-**Urutan setup yang disarankan (hari pertama):**
-1. Init project Laravel + koneksi PostgreSQL + aktifkan PostGIS
-2. Buat semua migration sesuai skema di Bagian 3
-3. Seeder data wilayah (minimal beberapa kecamatan contoh dengan geometri sederhana)
-4. Setup Sanctum untuk auth kader
-5. Implementasi endpoint Peta Resiko dulu (fitur inti, bobot penilaian terbesar)
-6. Baru lanjut ke Laporan, lalu Kader Dashboard, baru fitur pendukung lainnya
-
----
-
-## 8. Prioritas Implementasi (karena waktu sangat terbatas)
-
-| Prioritas | Modul | Alasan |
-|---|---|---|
-| 🔴 P0 — Wajib | Peta Resiko + skor risiko + job cuaca | Fitur inti, bobot rubrik terbesar (25% Fungsionalitas Heatmap & CRUD Dashboard) |
-| 🔴 P0 — Wajib | Laporan warga (submit + upload foto) | Fitur crowdsourcing = pembeda utama proposal |
-| 🔴 P0 — Wajib | Kader login + input ABJ | Disebut eksplisit di rubrik penilaian |
-| 🟡 P1 — Penting | Notifikasi (minimal versi sederhana) | Ada di proposal, tapi bisa versi ringkas dulu |
-| 🟡 P1 — Penting | Subscribe wilayah + kuota | Terkait erat dengan gamifikasi yang jadi nilai jual |
-| 🟢 P2 — Bisa disederhanakan | Kalkulator risiko (kuis) | **Rekomendasi: frontend-only**, tidak butuh backend |
-| 🟢 P2 — Bisa disederhanakan | Artikel edukasi | Seed manual, tidak perlu CMS admin |
-| 🟢 P2 — Bisa disederhanakan | Statistik page | Desain belum final — tunda sampai UI/UX selesaikan mockup |
-| ⚪ Opsional | Export PDF/Excel kader | Bagus untuk nilai tambah tapi bisa jadi fitur terakhir kalau waktu cukup |
+### 5.2 Alur 2: Pelaporan Genangan Air & Jentik oleh Warga (`ReportView.vue`)
+```
+[User Buka /laporan]
+        │
+        ▼
+[Browser Geolocation API Minta Izin GPS]
+        ├─ GET /api/geocode/reverse?lat=...&lng=...
+        └─ Mengisi otomatis string alamat pada form lokasi
+        │
+[User Isi Form Laporan]
+        ├─ Unggah Foto Genangan (Validasi Client: Image format, Max 10MB)
+        ├─ Isi Deskripsi Temuan Genangan Air / Sarang Nyamuk
+        └─ Pilih Toggle "Lapor sebagai Anonim" atau "Dengan Identitas"
+        │
+[User Klik "Kirim Laporan"]
+        │
+        ▼
+[Frontend Request POST /api/laporan-warga (multipart/form-data)]
+        │
+        ├─ Backend Validasi Ulang File (MIME & Size) & Simpan Foto ke Storage
+        ├─ Auto-Resolve wilayah_kode dari Koordinat GPS
+        ├─ Insert Record ke Tabel `laporan_warga` (status: 'belum_ditangani')
+        └─ Mengembalikan Response 201 Created
+        │
+        ▼
+[Tindak Lanjut & Verifikasi]
+        ├─ Verifikasi Validitas oleh Pengguna Lain / Kader: POST /api/laporan-warga/{id}/verifikasi
+        └─ Pembaruan Status Intervensi oleh Kader/Admin: PATCH /api/laporan-warga/{id}/status
+```
 
 ---
 
-*Dokumen ini disusun berdasarkan analisis 10 mockup UI (Landing, Peta Resiko, Laporan + halaman sukses, Notifikasi, Edukasi + Artikel + Kuis, Statistik, Login Kader) dan proposal TIC 9.0. Perlu direvisi begitu ada perubahan desain, terutama untuk halaman Statistik yang belum final.*
+### 5.3 Alur 3: Pendataan & Dashboard Kader Kesehatan (`KaderDashboardView.vue` & ABJ Form)
+```
+[Kader Login via /login]
+        │
+        ├─► POST /api/auth/login {email, password}
+        └─ Backend Mengembalikan Sanctum Bearer Token & Role ('kader')
+        │
+[Kader Buka Dashboard Kader]
+        │
+        ├─► GET /api/kader/dashboard (Header: Authorization Bearer Token)
+        └─ Render Overview: Skor Risiko Wilayah Binaan, Rata-rata ABJ %, & Ringkasan Laporan Warga
+        │
+[Kader Input Examination ABJ]
+        │
+        ├─► POST /api/abj {wilayah_kode, jumlah_rumah_diperiksa, jumlah_rumah_positif_jentik, tanggal, catatan}
+        ├─ Backend Hitung `abj_persen = (1 - positif / diperiksa) * 100`
+        ├─ Simpan ke Tabel `abj_laporan`
+        └─ Otomatis Memperbarui Confidence Level Wilayah Binaan menjadi `kuat` (Data Lapangan)
+        │
+[Kader Unduh Rekap Laporan Resmi]
+        └─► GET /api/export/abj/pdf atau /excel -> Generate Dokumen Rekap Resmi untuk Puskesmas/Dinkes
+```
+
+---
+
+## 6. Ringkasan & Panduan Pengujian Sistem
+
+1. **Uji Perhitungan Skor Risiko & Job**:
+   - Jalankan `php artisan skor-risiko:refresh-cuaca --sync --limit=10` untuk menguji pemrosesan data cuaca Open-Meteo dan kalkulasi skor risiko secara *synchronous*.
+2. **Uji Integrasi Peta Risiko**:
+   - Buka `/peta-resiko` di browser, lakukan pencarian wilayah (misal: *Jakarta Barat*, *Kembangan*, *Bogor*), dan pastikan panel "Hasil Pemeriksaan" menampilkan data skor risiko, indikator cuaca, grafik prediksi 14 hari, serta penanda *confidence level* secara akurat.
+3. **Uji Laporan Warga & Kader**:
+   - Lakukan submit laporan genangan di `/laporan` dan uji otentikasi login kader serta penginputan data ABJ pada endpoint `/api/abj`.
