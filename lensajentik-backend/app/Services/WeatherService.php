@@ -15,41 +15,98 @@ class WeatherService
     /**
      * Pastikan wilayah punya koordinat. Kalau belum, geocode dan simpan.
      */
+    /**
+     * Pastikan wilayah punya koordinat.
+     *
+     * Fallback chain:
+     *   1. Geocode kecamatan langsung (Open-Meteo → Nominatim)
+     *   2. Geocode kabupaten induk → pakai koordinat itu + offset kecil
+     *   3. Geocode provinsi induk → pakai koordinat itu + offset
+     *
+     * Koordinat parent juga ikut disimpan supaya kecamatan lain dalam
+     * kabupaten/provinsi yang sama tidak perlu geocode ulang.
+     */
     public function ensureCoordinates(Wilayah $wilayah): bool
     {
         if ($wilayah->latitude && $wilayah->longitude) {
             return true;
         }
 
-        // Susun nama pencarian dengan konteks parent untuk akurasi
-        $namaParent = optional($wilayah->parent)->nama;
-        $namaGrandParent = optional($wilayah->parent?->parent)->nama;
-        if ($namaGrandParent) {
-            $searchQuery = "{$wilayah->nama}, {$namaParent}, {$namaGrandParent}, Indonesia";
-        } elseif ($namaParent) {
-            $searchQuery = "{$wilayah->nama}, {$namaParent}, Indonesia";
-        } else {
-            $searchQuery = "{$wilayah->nama}, Indonesia";
+        $parent   = $wilayah->parent;       // kabupaten
+        $gparent  = $parent?->parent;        // provinsi
+
+        // ── Level 1: Geocode kecamatan ──────────────────────────────────
+        $query = $this->buildSearchQuery($wilayah, $parent, $gparent);
+        $coords = $this->geocodeOpenMeteo($query)
+               ?? $this->geocodeNominatim($query);
+
+        if ($coords) {
+            $wilayah->update(['latitude' => $coords['lat'], 'longitude' => $coords['lng']]);
+            return true;
         }
 
-        // ── Coba 1: Open-Meteo Geocoding API ──────────────────────────
-        $coords = $this->geocodeOpenMeteo($searchQuery);
-
-        // ── Coba 2: Nominatim (fallback) ──────────────────────────────
-        if (!$coords) {
-            $coords = $this->geocodeNominatim($searchQuery);
+        // ── Level 2: Geocode kabupaten induk + offset ───────────────────
+        if ($parent) {
+            $coords = $this->getOrGeocodeParent($parent);
+            if ($coords) {
+                // Kasih offset ~0.01° (±1 km) biar gak numpuk semua
+                $lat = $coords['lat'] + (mt_rand(-100, 100) / 10000);
+                $lng = $coords['lng'] + (mt_rand(-100, 100) / 10000);
+                $wilayah->update(['latitude' => round($lat, 7), 'longitude' => round($lng, 7)]);
+                return true;
+            }
         }
 
-        if (!$coords) {
-            return false;
+        // ── Level 3: Geocode provinsi induk + offset ────────────────────
+        if ($gparent) {
+            $coords = $this->getOrGeocodeParent($gparent);
+            if ($coords) {
+                $lat = $coords['lat'] + (mt_rand(-200, 200) / 10000);
+                $lng = $coords['lng'] + (mt_rand(-200, 200) / 10000);
+                $wilayah->update(['latitude' => round($lat, 7), 'longitude' => round($lng, 7)]);
+                return true;
+            }
         }
 
-        $wilayah->update([
-            'latitude'  => $coords['lat'],
-            'longitude' => $coords['lng'],
-        ]);
+        return false;
+    }
 
-        return true;
+    /**
+     * Bangun query pencarian dengan konteks hierarki wilayah.
+     */
+    protected function buildSearchQuery(Wilayah $wilayah, ?Wilayah $parent, ?Wilayah $gparent): string
+    {
+        if ($gparent) {
+            return "{$wilayah->nama}, {$parent->nama}, {$gparent->nama}, Indonesia";
+        }
+        if ($parent) {
+            return "{$wilayah->nama}, {$parent->nama}, Indonesia";
+        }
+        return "{$wilayah->nama}, Indonesia";
+    }
+
+    /**
+     * Ambil koordinat parent (kabupaten/provinsi) dari cache DB,
+     * atau geocode dan simpan.
+     * @return array{lat: float, lng: float}|null
+     */
+    protected function getOrGeocodeParent(Wilayah $parent): ?array
+    {
+        // Sudah ada di DB
+        if ($parent->latitude && $parent->longitude) {
+            return ['lat' => (float) $parent->latitude, 'lng' => (float) $parent->longitude];
+        }
+
+        $query = "{$parent->nama}, Indonesia";
+        $coords = $this->geocodeNominatim($query)
+               ?? $this->geocodeOpenMeteo($query);
+
+        if ($coords) {
+            $parent->update(['latitude' => $coords['lat'], 'longitude' => $coords['lng']]);
+            return $coords;
+        }
+
+        return null;
     }
 
     /**

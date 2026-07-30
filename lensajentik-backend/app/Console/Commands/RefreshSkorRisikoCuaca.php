@@ -81,6 +81,9 @@ class RefreshSkorRisikoCuaca extends Command
                     logger()->warning("Gagal proses {$wil->nama}: {$e->getMessage()}");
                 }
                 $bar->advance();
+                // Jeda 200ms untuk hormati rate limit Nominatim (1 req/detik)
+                // + Open-Meteo juga punya rate limit
+                usleep(200_000);
             }
 
             $bar->finish();
