@@ -106,6 +106,7 @@ Route::prefix('wilayah')->group(function () {
     Route::get('/', [WilayahController::class, 'index']);
     Route::get('/search', [WilayahController::class, 'search']);
     Route::get('/terdekat', [WilayahController::class, 'terdekat']); // harus sebelum /{kode}
+    Route::get('/{kode}/boundary', [GeocodeController::class, 'wilayahBoundary']); // harus sebelum /{kode}
     Route::get('/{kode}', [WilayahController::class, 'show']);
     Route::get('/{kode}/desa', [WilayahController::class, 'desa']);
 });

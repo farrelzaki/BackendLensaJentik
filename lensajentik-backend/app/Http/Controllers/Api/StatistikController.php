@@ -235,16 +235,38 @@ class StatistikController extends Controller
         $laporanPerStatus = LaporanWarga::selectRaw('status, count(*) as jumlah')
             ->groupBy('status')->pluck('jumlah', 'status');
 
-        // ── Per kabupaten (top 20) ─────────────────────────────
-        $perWilayah = $skorPerKab->take(20)->map(fn($k) => [
-            'kode'  => $k->kode,
-            'nama'  => $k->nama,
-            'skor'  => $k->skor > 0 ? (float) $k->skor : null,
-            'level' => $k->skor > 0
-                ? ($k->skor >= 70 ? 'tinggi' : ($k->skor >= 40 ? 'sedang' : 'rendah'))
-                : 'belum_ada_data',
-            'kecamatan_dengan_data' => (int) $k->kec_data,
-        ])->values();
+        // ── Ranking kecamatan (top 10 hijau & top 10 merah) ────
+        $topHijau = SkorRisiko::where('jenis_penyakit', 'dbd')
+            ->where('is_prediksi', false)
+            ->whereDate('tanggal', now()->toDateString())
+            ->where('level_risiko', 'rendah')
+            ->whereNotNull('skor')
+            ->with('wilayah:kode,nama')
+            ->orderBy('skor')
+            ->limit(10)
+            ->get()
+            ->map(fn($s) => [
+                'kode'  => $s->wilayah_kode,
+                'nama'  => $s->wilayah->nama ?? '?',
+                'skor'  => (float) $s->skor,
+                'level' => $s->level_risiko,
+            ]);
+
+        $topMerah = SkorRisiko::where('jenis_penyakit', 'dbd')
+            ->where('is_prediksi', false)
+            ->whereDate('tanggal', now()->toDateString())
+            ->where('level_risiko', 'tinggi')
+            ->whereNotNull('skor')
+            ->with('wilayah:kode,nama')
+            ->orderBy('skor', 'desc')
+            ->limit(10)
+            ->get()
+            ->map(fn($s) => [
+                'kode'  => $s->wilayah_kode,
+                'nama'  => $s->wilayah->nama ?? '?',
+                'skor'  => (float) $s->skor,
+                'level' => $s->level_risiko,
+            ]);
 
         return response()->json([
             'wilayah'   => ['kode' => null, 'nama' => 'Indonesia', 'tingkat' => 'nasional'],
@@ -255,10 +277,12 @@ class StatistikController extends Controller
                 'total_laporan'       => $laporanPerStatus->sum(),
                 'zona_hijau'          => $zonaHijau,
                 'zona_merah'          => $zonaMerah,
+                'zona_sedang'         => $skorPerKab->filter(fn($k) => $k->skor >= 40 && $k->skor < 70)->count(),
                 'total_wilayah'       => $kabupaten->count(),
                 'wilayah_dengan_data' => $wilDenganData,
             ],
-            'per_wilayah'        => $perWilayah,
+            'top_hijau'          => $topHijau,
+            'top_merah'          => $topMerah,
             'tren_abj'           => [],
             'laporan_per_status' => $laporanPerStatus,
         ]);

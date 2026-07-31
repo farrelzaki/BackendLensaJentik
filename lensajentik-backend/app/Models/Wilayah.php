@@ -11,7 +11,12 @@ class Wilayah extends Model
     public $incrementing = false;
     protected $keyType = 'string';
 
-    protected $fillable = ['kode', 'nama', 'tingkat', 'parent_kode', 'latitude', 'longitude', 'elevasi'];
+    protected $fillable = ['kode', 'nama', 'tingkat', 'parent_kode', 'latitude', 'longitude', 'elevasi', 'geojson', 'geojson_fetched_at'];
+
+    protected $casts = [
+        'geojson' => 'array',
+        'geojson_fetched_at' => 'datetime',
+    ];
 
     public function parent()
     {
