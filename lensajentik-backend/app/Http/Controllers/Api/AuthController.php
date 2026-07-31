@@ -104,8 +104,9 @@ class AuthController extends Controller
 
         $validated = $request->validate([
             'nama'                  => 'sometimes|string|max:255',
-            'name'                  => 'sometimes|string|max:255', // alias untuk kompatibilitas frontend
+            'name'                  => 'sometimes|string|max:255',
             'phone'                 => 'sometimes|nullable|string|max:20',
+            'avatar'                => 'sometimes|image|mimes:jpeg,jpg,png,webp|max:2048',
             'current_password'      => 'required_with:password|string',
             'password'              => 'sometimes|string|min:8|confirmed',
         ]);
@@ -126,6 +127,16 @@ class AuthController extends Controller
             'nama'  => $nama,
             'phone' => array_key_exists('phone', $validated) ? $validated['phone'] : null,
         ], fn($v) => $v !== null);
+
+        // Upload avatar jika ada
+        if ($request->hasFile('avatar')) {
+            $file = $request->file('avatar');
+            $dir = public_path('uploads/avatars');
+            if (!is_dir($dir)) { mkdir($dir, 0755, true); }
+            $filename = 'avatar_' . $user->id . '_' . time() . '.' . $file->getClientOriginalExtension();
+            $file->move($dir, $filename);
+            $updateData['avatar'] = url('uploads/avatars/' . $filename);
+        }
 
         // Jika phone dikirim secara eksplisit (boleh null/kosong)
         if (array_key_exists('phone', $validated)) {
