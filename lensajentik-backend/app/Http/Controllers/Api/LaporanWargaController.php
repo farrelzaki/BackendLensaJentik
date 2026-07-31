@@ -4,16 +4,12 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\LaporanWarga;
 use App\Models\VerifikasiLaporan;
-use App\Services\CloudinaryService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 class LaporanWargaController extends Controller
 {
-    public function __construct(
-        protected CloudinaryService $cloudinaryService,
-        protected \App\Services\WeatherService $weatherService
-    ) {}
+    public function __construct() {}
 
     /**
      * POST /api/laporan-warga
@@ -42,7 +38,9 @@ class LaporanWargaController extends Controller
             );
         }
 
-        $fotoUrl = $this->cloudinaryService->upload($request->file('foto'), 'laporan-warga');
+        // Simpan foto ke storage lokal (bukan Cloudinary)
+        $fotoPath = $request->file('foto')->store('laporan-warga', 'public');
+        $fotoUrl = asset('storage/' . $fotoPath);
 
         $user = Auth::guard('sanctum')->user();
 
