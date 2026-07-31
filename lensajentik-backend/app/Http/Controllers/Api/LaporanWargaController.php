@@ -38,24 +38,49 @@ class LaporanWargaController extends Controller
             );
         }
 
-        // Simpan foto ke storage lokal (bukan Cloudinary)
-        $fotoPath = $request->file('foto')->store('laporan-warga', 'public');
-        $fotoUrl = asset('storage/' . $fotoPath);
+        // Simpan foto langsung ke public/uploads/
+        $file = $request->file('foto');
+        $dir = public_path('uploads/laporan-warga');
+        if (!is_dir($dir)) { mkdir($dir, 0755, true); }
+        $filename = uniqid() . '_' . time() . '.' . $file->getClientOriginalExtension();
+        $file->move($dir, $filename);
+        $fotoUrl = url('uploads/laporan-warga/' . $filename);
 
         $user = Auth::guard('sanctum')->user();
 
-        $laporan = LaporanWarga::create([
-            'user_id'       => $user?->id,
-            'session_id'    => $user ? null : ($request->session()->getId() ?? null),
-            'nama_pelapor'  => $validated['nama_pelapor'] ?? ($user?->nama),
-            'wilayah_kode'  => $wilayahKode,
-            'latitude'      => $validated['latitude'],
-            'longitude'     => $validated['longitude'],
-            'foto_path'     => $fotoUrl,
-            'deskripsi'     => $validated['deskripsi'] ?? null,
-            'is_anonim'     => $validated['is_anonim'] ?? (!$user),
-            'status'        => 'belum_ditangani',
-        ]);
+        // Fallback: kalau resolveWilayah gagal, pakai kode default
+        $wilayahKode = $wilayahKode ?? '3174010'; // Kembangan sebagai fallback
+
+        try {
+            $laporan = LaporanWarga::create([
+                'user_id'       => $user?->id,
+                'wilayah_kode'  => $wilayahKode,
+                'latitude'      => $validated['latitude'],
+                'longitude'     => $validated['longitude'],
+                'foto_path'     => $fotoUrl,
+                'deskripsi'     => $validated['deskripsi'] ?? null,
+                'status'        => 'belum_ditangani',
+            ]);
+        } catch (\Exception $e) {
+            // Fallback: coba dengan kolom baru (migration belum jalan)
+            try {
+                $laporan = LaporanWarga::create([
+                    'user_id'       => $user?->id,
+                    'wilayah_kode'  => $wilayahKode,
+                    'latitude'      => $validated['latitude'],
+                    'longitude'     => $validated['longitude'],
+                    'foto_path'     => $fotoUrl,
+                    'deskripsi'     => $validated['deskripsi'] ?? null,
+                    'status'        => 'belum_ditangani',
+                    'session_id'    => $user ? null : ($request->session()->getId() ?? null),
+                    'nama_pelapor'  => $validated['nama_pelapor'] ?? ($user?->nama),
+                    'is_anonim'     => $validated['is_anonim'] ?? (!$user),
+                ]);
+            } catch (\Exception $e2) {
+                logger()->error('Laporan warga gagal: ' . $e2->getMessage());
+                return response()->json(['message' => 'Server Error: ' . $e2->getMessage()], 500);
+            }
+        }
 
         // Gamifikasi: +10 poin untuk user login
         if ($user) {
