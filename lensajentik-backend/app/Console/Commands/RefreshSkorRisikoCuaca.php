@@ -11,8 +11,9 @@ use Illuminate\Console\Command;
     {--wilayah=   : Kode wilayah spesifik (opsional)}
     {--jenis=dbd  : Jenis penyakit (dbd|malaria)}
     {--sync       : Proses langsung tanpa queue (default: pakai queue)}
-    {--limit=     : Batasi jumlah wilayah yang diproses (untuk testing)}')]
-#[Description('Hitung skor risiko murni cuaca (Open-Meteo). default pakai queue, --sync untuk proses langsung.')]
+    {--limit=     : Batasi jumlah wilayah yang diproses (untuk testing)}
+    {--provinsi=  : Filter berdasarkan kode provinsi (32 = Jawa Barat)}')]
+#[Description('Hitung skor risiko murni cuaca (Open-Meteo). default pakai queue, --sync untuk proses langsung. Gunakan --provinsi=32 untuk Jawa Barat saja.')]
 class RefreshSkorRisikoCuaca extends Command
 {
     public function handle(): int
@@ -44,8 +45,19 @@ class RefreshSkorRisikoCuaca extends Command
             return self::SUCCESS;
         }
 
-        // ── Mode bulk: semua kecamatan ─────────────────────────────────────
+        // ── Mode bulk: kecamatan (opsional filter provinsi) ────────────────
         $query = Wilayah::where('tingkat', 'kecamatan');
+
+        // Filter by provinsi: cari kecamatan yang parent kabupaten-nya
+        // berada di bawah provinsi tertentu (mis. 32 = Jawa Barat)
+        if ($provinsi = $this->option('provinsi')) {
+            $query->whereIn('parent_kode', function ($sub) use ($provinsi) {
+                $sub->select('kode')
+                    ->from('wilayah')
+                    ->where('parent_kode', $provinsi)
+                    ->where('tingkat', 'kabupaten');
+            });
+        }
 
         if ($limit) {
             $query->limit($limit);
