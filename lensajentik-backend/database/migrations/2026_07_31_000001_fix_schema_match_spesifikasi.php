@@ -86,9 +86,17 @@ return new class extends Migration
         }
 
         if (!Schema::hasColumn('verifikasi_laporan', 'status_verifikasi')) {
-            DB::statement("ALTER TABLE verifikasi_laporan ADD COLUMN IF NOT EXISTS status_verifikasi VARCHAR(20) DEFAULT NULL");
-            DB::statement("ALTER TABLE verifikasi_laporan ADD COLUMN IF NOT EXISTS catatan TEXT DEFAULT NULL");
-            try { DB::statement('ALTER TABLE verifikasi_laporan ADD CONSTRAINT verifikasi_laporan_unique UNIQUE (laporan_warga_id, user_id)'); } catch (\Exception $e) {}
+            if ($driver === 'sqlite') {
+                Schema::table('verifikasi_laporan', function (Blueprint $table) {
+                    $table->string('status_verifikasi', 20)->nullable();
+                    $table->text('catatan')->nullable();
+                    $table->unique(['laporan_warga_id', 'user_id'], 'verifikasi_laporan_unique');
+                });
+            } else {
+                DB::statement("ALTER TABLE verifikasi_laporan ADD COLUMN IF NOT EXISTS status_verifikasi VARCHAR(20) DEFAULT NULL");
+                DB::statement("ALTER TABLE verifikasi_laporan ADD COLUMN IF NOT EXISTS catatan TEXT DEFAULT NULL");
+                try { DB::statement('ALTER TABLE verifikasi_laporan ADD CONSTRAINT verifikasi_laporan_unique UNIQUE (laporan_warga_id, user_id)'); } catch (\Exception $e) {}
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════════
@@ -122,11 +130,11 @@ return new class extends Migration
         }
 
         // ═══════════════════════════════════════════════════════════════════
-        // 7. Tambah constraint baru (setelah data diupdate)
-        // ═══════════════════════════════════════════════════════════════════
-        DB::statement("ALTER TABLE laporan_warga ADD CONSTRAINT laporan_warga_status_check CHECK (status IN ('belum_ditangani','diproses','selesai'))");
-        DB::statement("ALTER TABLE skor_risiko ADD CONSTRAINT skor_risiko_level_risiko_check CHECK (level_risiko IN ('rendah','sedang','tinggi','belum_ada_data'))");
-        DB::statement("ALTER TABLE prediksi_risiko ADD CONSTRAINT prediksi_risiko_level_risiko_check CHECK (level_risiko IN ('rendah','sedang','tinggi','belum_ada_data'))");
+        if ($driver !== 'sqlite') {
+            DB::statement("ALTER TABLE laporan_warga ADD CONSTRAINT laporan_warga_status_check CHECK (status IN ('belum_ditangani','diproses','selesai'))");
+            DB::statement("ALTER TABLE skor_risiko ADD CONSTRAINT skor_risiko_level_risiko_check CHECK (level_risiko IN ('rendah','sedang','tinggi','belum_ada_data'))");
+            DB::statement("ALTER TABLE prediksi_risiko ADD CONSTRAINT prediksi_risiko_level_risiko_check CHECK (level_risiko IN ('rendah','sedang','tinggi','belum_ada_data'))");
+        }
     }
 
     public function down(): void
