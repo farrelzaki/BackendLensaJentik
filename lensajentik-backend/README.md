@@ -113,7 +113,7 @@ curl http://localhost:8000/api/wilayah?tingkat=provinsi
 # Cek login dengan akun demo
 curl -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin.bogor@lensajentik.id","password":"password123"}'
+  -d '{"email":"farrelmzaki77@gmail.com","password":"password123"}'
 ```
 
 ### 7. (Opsional) Jalankan Scheduler
@@ -179,27 +179,17 @@ Data cuaca di-generate dengan karakteristik realistis Bogor (kota hujan):
 
 ## 🔑 Akun Demo
 
-Semua akun menggunakan **password yang sama**: `password123`
+### Akun Testing yang Tersedia
 
-### Dari BogorDemoDataSeeder (default)
+| Role | Email | Password | Wilayah | Poin |
+|---|---|---|---|---|
+| **Admin Dinkes** | `budi@example.com` | `password` | — | 10 |
+| **Kader** | `siti@example.com` | `password` | — | 0 |
+| **Admin Dinkes** | `farrelmzaki77@gmail.com` | `password123` | — | 0 |
+| **Kader** | `farjeng77@gmail.com` | `password123` | Kecamatan Patrang (Jember) | 80 |
+| **Warga** | `sekunifril@gmail.com` | `password123` | Kecamatan Patrang (Jember) | 20 |
 
-| Role | Email | Wilayah Tugas | Poin |
-|---|---|---|---|
-| **Admin Dinkes** | `admin.bogor@lensajentik.id` | — | 0 |
-| **Kader 1** | `kader.bogor1@lensajentik.id` | Kecamatan Bogor Tengah | 30–120 |
-| **Kader 2** | `kader.bogor2@lensajentik.id` | Kecamatan Bogor Selatan | 30–120 |
-| **Kader 3** | `kader.bogor3@lensajentik.id` | Kecamatan Bogor Utara | 30–120 |
-| **Warga 1** | `warga.bogor1@lensajentik.id` | Kecamatan Bogor Tengah | 10–80 |
-| **Warga 2** | `warga.bogor2@lensajentik.id` | Kecamatan Bogor Selatan | 10–80 |
-| **Warga 3** | `warga.bogor3@lensajentik.id` | Kecamatan Bogor Utara | 10–80 |
-
-### Dari DemoDataSeeder (legacy)
-
-| Role | Email | Wilayah |
-|---|---|---|
-| Admin | `farrelmzaki77@gmail.com` | — |
-| Kader | `farjeng77@gmail.com` | Kecamatan Patrang (Jember) |
-| Warga | `sekunifril@gmail.com` | Kecamatan Patrang (Jember) |
+> **Catatan:** Password berbeda per akun — perhatikan email dan password yang sesuai.
 
 ---
 
@@ -520,13 +510,13 @@ php artisan reminder-kader:cek
 ### Login & Role
 
 ```bash
-# 1. Login sebagai admin
+# 1. Login sebagai admin (password: password123)
 curl -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin.bogor@lensajentik.id","password":"password123"}'
+  -d '{"email":"farrelmzaki77@gmail.com","password":"password123"}'
 
 # Response:
-# { "token": "1|abc123...", "user": { "id": 1, "role": "admin_dinkes", ... } }
+# { "token": "1|abc123...", "user": { "id": 3, "role": "admin_dinkes", ... } }
 
 # 2. Simpan token untuk request berikutnya
 TOKEN="1|abc123..."
@@ -535,15 +525,15 @@ TOKEN="1|abc123..."
 curl http://localhost:8000/api/auth/me \
   -H "Authorization: Bearer $TOKEN"
 
-# 4. Login sebagai kader
+# 4. Login sebagai kader (password: password123)
 curl -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"kader.bogor1@lensajentik.id","password":"password123"}'
+  -d '{"email":"farjeng77@gmail.com","password":"password123"}'
 
-# 5. Login sebagai warga
+# 5. Login sebagai warga (password: password123)
 curl -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"warga.bogor1@lensajentik.id","password":"password123"}'
+  -d '{"email":"sekunifril@gmail.com","password":"password123"}'
 ```
 
 ### Testing Wilayah & Peta
@@ -596,7 +586,7 @@ curl http://localhost:8000/api/laporan-warga?wilayah_kode=3271010
 # 1. Login sebagai kader
 TOKEN=$(curl -s -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"kader.bogor1@lensajentik.id","password":"password123"}' \
+  -d '{"email":"farjeng77@gmail.com","password":"password123"}' \
   | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
 
 # 2. Input data ABJ
