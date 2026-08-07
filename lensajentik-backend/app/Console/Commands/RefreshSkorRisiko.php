@@ -53,8 +53,8 @@ class RefreshSkorRisiko extends Command
         foreach ($wilayahAktif as $wilayah) {
             try {
                 $weatherService->fetchAndCache($wilayah);
-                $riskScoreService->hitungDanSimpan($wilayah, 'dbd');
-                $riskScoreService->hitungDanSimpan($wilayah, 'malaria');
+                $riskScoreService->hitungDanSimpan($wilayah, 'dbd', paksaRefresh: true);
+                $riskScoreService->hitungDanSimpan($wilayah, 'malaria', paksaRefresh: true);
             } catch (\Exception $e) {
                 $gagal++;
                 $this->newLine();
