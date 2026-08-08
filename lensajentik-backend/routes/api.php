@@ -20,6 +20,14 @@ use App\Http\Controllers\Api\KaderDashboardController;
 Route::prefix('statistik')->group(function () {
     Route::get('/ringkasan', [StatistikController::class, 'ringkasan']);
     Route::get('/bandingkan', [StatistikController::class, 'bandingkan']);
+    Route::get('/kelengkapan-data', [StatistikController::class, 'kelengkapanData']);
+    Route::get('/gap-abj', [StatistikController::class, 'gapAbj']);
+    Route::get('/gap-abj/export', [StatistikController::class, 'gapAbjExport']);
+    Route::get('/korelasi-cuaca', [StatistikController::class, 'korelasiCuaca']);
+    Route::get('/lonjakan-risiko', [StatistikController::class, 'lonjakanRisiko']);
+    Route::get('/laporan-ringkas/{kode}', [StatistikController::class, 'laporanRingkas']);
+    Route::get('/laporan-ringkas/{kode}/pdf', [StatistikController::class, 'laporanRingkasPdf']);
+    Route::get('/export-riset', [StatistikController::class, 'exportRiset']);
 });
 
 Route::prefix('edukasi')->group(function () {
